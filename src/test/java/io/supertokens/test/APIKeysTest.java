@@ -16,12 +16,15 @@
 
 package io.supertokens.test;
 
-import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import io.supertokens.Main;
 import io.supertokens.ProcessState;
 import io.supertokens.cliOptions.CLIOptions;
 import io.supertokens.config.Config;
 import io.supertokens.test.httpRequest.HttpRequestForTesting;
+import io.supertokens.test.httpRequest.HttpRequestMocking;
 import io.supertokens.utils.SemVer;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -29,7 +32,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestRule;
 
-import java.io.File;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -41,6 +48,9 @@ public class APIKeysTest {
 
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -59,7 +69,7 @@ public class APIKeysTest {
 
         Utils.setValueInConfig("api_keys", "abctijenbogweg=-2438243u98"); // set api_keys
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         String[] apiKeys = Config.getConfig(process.getProcess()).getAPIKeys();
@@ -76,7 +86,7 @@ public class APIKeysTest {
     public void testGetApiKeysReturnsNullWhenAPIKeyIsNotSet() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
         assertNull(Config.getConfig(process.getProcess()).getAPIKeys());
 
@@ -93,7 +103,7 @@ public class APIKeysTest {
         // api key length less that minimum length 20
         Utils.setValueInConfig("api_keys", "abc"); // set api_keys
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         ProcessState.EventAndException event = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
         assertNotNull(event);
         assertEquals(event.exception.getCause().getMessage(),
@@ -106,7 +116,7 @@ public class APIKeysTest {
 
         // setting api key with non-supported symbols
         Utils.setValueInConfig("api_keys", "abC&^0t4t3t40t4@#%greognr"); // set api_keys
-        process = TestingProcessManager.start(args);
+        process = TestingProcessManager.startIsolatedProcess(args);
 
         event = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
         assertNotNull(event);
@@ -127,7 +137,7 @@ public class APIKeysTest {
 
         Utils.setValueInConfig("api_keys", validKey + "," + invalidKey); // set api_keys
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         ProcessState.EventAndException event = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
         assertNotNull(event);
         assertEquals(event.exception.getCause().getMessage(),
@@ -147,7 +157,7 @@ public class APIKeysTest {
         String apiKey = "hg40239oirjgBHD9450=Beew123-";
         Utils.setValueInConfig("api_keys", apiKey); // set api_keys
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         String userId = "userId";
@@ -198,8 +208,10 @@ public class APIKeysTest {
         String apiKey = "hg40239oirjgBHD9450=Beew123-";
         Utils.setValueInConfig("api_keys", apiKey); // set api_keys
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        HttpRequestForTesting.disableAddingAppId = true;
 
         String response = HttpRequestForTesting.sendJsonPOSTRequest(process.getProcess(), "",
                 "http://localhost:3567/hello", null, 1000, 1000, null, Utils.getCdiVersionStringLatestForTests(), "");
@@ -233,7 +245,7 @@ public class APIKeysTest {
 
         Utils.setValueInConfig("api_keys", apiKey1 + "," + apiKey2 + "," + apiKey3); // set api_keys
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         String userId = "userId";
@@ -305,7 +317,7 @@ public class APIKeysTest {
         Utils.setValueInConfig("api_keys", " " + apiKey1 + ", " + apiKey2 + ", " + apiKey3 + "," + apiKey4); // set
         // api_keys
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         String userId = "userId";
@@ -372,4 +384,182 @@ public class APIKeysTest {
         assertTrue(response.get("refreshToken").getAsJsonObject().has("createdTime"));
         assertEquals(response.get("refreshToken").getAsJsonObject().entrySet().size(), 3);
     }
+
+    @Test
+    public void testDifferentWaysToPassAPIKey() throws Exception {
+        String[] args = {"../"};
+
+        String apiKey1 = "hg40239oirjgBHD9450=Beew123-1";
+
+        Utils.setValueInConfig("api_keys", apiKey1); // set api_keys
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        String userId = "userId";
+        JsonObject userDataInJWT = new JsonObject();
+        userDataInJWT.addProperty("key", "value");
+        JsonObject userDataInDatabase = new JsonObject();
+        userDataInDatabase.addProperty("key", "value");
+
+        JsonObject request = new JsonObject();
+        request.addProperty("userId", userId);
+        request.add("userDataInJWT", userDataInJWT);
+        request.add("userDataInDatabase", userDataInDatabase);
+        request.addProperty("enableAntiCsrf", false);
+
+        {
+            // check that any one of the keys can be used
+            Map<String, String> headers = new HashMap<>();
+            headers.put("api-key", apiKey1);
+            headers.put("cdi-version", "2.21");
+            JsonObject sessionInfo = sendJsonRequest(process.getProcess(),
+                    "http://localhost:3567/recipe/session", request, 1000, 1000, "POST", headers);
+            assertEquals(sessionInfo.get("status").getAsString(), "OK");
+            checkSessionResponse(sessionInfo, process, userId, userDataInJWT);
+        }
+
+        {
+            // check that any one of the keys can be used
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", apiKey1);
+            headers.put("cdi-version", "2.21");
+            JsonObject sessionInfo = sendJsonRequest(process.getProcess(),
+                    "http://localhost:3567/recipe/session", request, 1000, 1000, "POST", headers);
+            assertEquals(sessionInfo.get("status").getAsString(), "OK");
+            checkSessionResponse(sessionInfo, process, userId, userDataInJWT);
+        }
+
+        {
+            // check that any one of the keys can be used
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", "bearer " + apiKey1);
+            headers.put("cdi-version", "2.21");
+            JsonObject sessionInfo = sendJsonRequest(process.getProcess(),
+                    "http://localhost:3567/recipe/session", request, 1000, 1000, "POST", headers);
+            assertEquals(sessionInfo.get("status").getAsString(), "OK");
+            checkSessionResponse(sessionInfo, process, userId, userDataInJWT);
+        }
+
+        {
+            // check that any one of the keys can be used
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", "bEaReR " + apiKey1);
+            headers.put("cdi-version", "2.21");
+            JsonObject sessionInfo = sendJsonRequest(process.getProcess(),
+                    "http://localhost:3567/recipe/session", request, 1000, 1000, "POST", headers);
+            assertEquals(sessionInfo.get("status").getAsString(), "OK");
+            checkSessionResponse(sessionInfo, process, userId, userDataInJWT);
+        }
+
+        {
+            // check that any one of the keys can be used
+            Map<String, String> headers = new HashMap<>();
+            headers.put("authorization", "bEaReR " + apiKey1);
+            headers.put("cdi-version", "2.21");
+            JsonObject sessionInfo = sendJsonRequest(process.getProcess(),
+                    "http://localhost:3567/recipe/session", request, 1000, 1000, "POST", headers);
+            assertEquals(sessionInfo.get("status").getAsString(), "OK");
+            checkSessionResponse(sessionInfo, process, userId, userDataInJWT);
+        }
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    private static final int STATUS_CODE_ERROR_THRESHOLD = 400;
+
+    private static URL getURL(Main main, String requestID, String url) throws MalformedURLException {
+        URL obj = new URL(url);
+        if (Main.isTesting) {
+            URL mock = HttpRequestMocking.getInstance(main).getMockURL(requestID, url);
+            if (mock != null) {
+                obj = mock;
+            }
+        }
+        return obj;
+    }
+
+    private static boolean isJsonValid(String jsonInString) {
+        JsonElement el = null;
+        try {
+            el = new JsonParser().parse(jsonInString);
+            el.getAsJsonObject();
+            return true;
+        } catch (Exception ex) {
+            try {
+                assert el != null;
+                el.getAsJsonArray();
+                return true;
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+    }
+
+    private static <T> T sendJsonRequest(Main main, String url, JsonElement requestBody,
+                                         int connectionTimeoutMS, int readTimeoutMS, String method,
+                                         Map<String, String> headers) throws IOException,
+            io.supertokens.test.httpRequest.HttpResponseException {
+        if (HttpRequestForTesting.corePort != null) {
+            url = url.replace(":3567", ":" + HttpRequestForTesting.corePort);
+        }
+        URL obj = getURL(main, "", url);
+        InputStream inputStream = null;
+        HttpURLConnection con = null;
+        try {
+            con = (HttpURLConnection) obj.openConnection();
+            con.setRequestMethod(method);
+            con.setConnectTimeout(connectionTimeoutMS);
+            con.setReadTimeout(readTimeoutMS + 1000);
+            con.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+
+            if (headers != null) {
+                for (Map.Entry<String, String> entry : headers.entrySet()) {
+                    con.setRequestProperty(entry.getKey(), entry.getValue());
+                }
+            }
+
+            if (requestBody != null) {
+                con.setDoOutput(true);
+                try (OutputStream os = con.getOutputStream()) {
+                    byte[] input = requestBody.toString().getBytes(StandardCharsets.UTF_8);
+                    os.write(input, 0, input.length);
+                }
+            }
+
+            int responseCode = con.getResponseCode();
+
+            if (responseCode < STATUS_CODE_ERROR_THRESHOLD) {
+                inputStream = con.getInputStream();
+            } else {
+                inputStream = con.getErrorStream();
+            }
+
+            StringBuilder response = new StringBuilder();
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+                String inputLine;
+                while ((inputLine = in.readLine()) != null) {
+                    response.append(inputLine);
+                }
+            }
+
+            if (responseCode < STATUS_CODE_ERROR_THRESHOLD) {
+                if (!isJsonValid(response.toString())) {
+                    return (T) response.toString();
+                }
+                return (T) (new JsonParser().parse(response.toString()));
+            }
+            throw new io.supertokens.test.httpRequest.HttpResponseException(responseCode, response.toString());
+        } finally {
+            if (inputStream != null) {
+                inputStream.close();
+            }
+
+            if (con != null) {
+                con.disconnect();
+            }
+        }
+    }
+
 }

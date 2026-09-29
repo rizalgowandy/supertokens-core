@@ -20,6 +20,13 @@ import io.supertokens.cliOptions.CLIOptions;
 import io.supertokens.config.Config;
 import io.supertokens.config.CoreConfig;
 import io.supertokens.cronjobs.Cronjobs;
+import io.supertokens.cronjobs.backfill.BackfillReservationTables;
+import io.supertokens.cronjobs.bulkimport.ProcessBulkImportUsers;
+import io.supertokens.cronjobs.cleanupActivityLogPartitions.CleanupActivityLogPartitions;
+import io.supertokens.cronjobs.cleanupOAuthSessionsAndChallenges.CleanupOAuthSessionsAndChallenges;
+import io.supertokens.cronjobs.deleteExpiredSAMLData.DeleteExpiredSAMLData;
+import io.supertokens.cronjobs.cleanupWebauthnExpiredData.CleanUpWebauthNExpiredDataCron;
+import io.supertokens.cronjobs.deadlocklogger.DeadlockLogger;
 import io.supertokens.cronjobs.deleteExpiredAccessTokenSigningKeys.DeleteExpiredAccessTokenSigningKeys;
 import io.supertokens.cronjobs.deleteExpiredDashboardSessions.DeleteExpiredDashboardSessions;
 import io.supertokens.cronjobs.deleteExpiredEmailVerificationTokens.DeleteExpiredEmailVerificationTokens;
@@ -37,9 +44,11 @@ import io.supertokens.multitenancy.MultitenancyHelper;
 import io.supertokens.output.Logging;
 import io.supertokens.pluginInterface.exceptions.DbInitException;
 import io.supertokens.pluginInterface.exceptions.InvalidConfigException;
+import io.supertokens.pluginInterface.exceptions.SchemaMismatchException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.storageLayer.StorageLayer;
+import io.supertokens.telemetry.TelemetryProvider;
 import io.supertokens.version.Version;
 import io.supertokens.webserver.Webserver;
 import org.jetbrains.annotations.TestOnly;
@@ -60,6 +69,8 @@ public class Main {
 
     // this is a special variable that will be set to true by TestingProcessManager
     public static boolean isTesting = false;
+    // this flag is used in ProcessBulkImportUsersCronJobTest to skip the user validation
+    public static boolean isTesting_skipBulkImportUserValidationInCronJob = false;
 
     // this is a special variable that will be set to true by TestingProcessManager
     public static boolean makeConsolePrintSilent = false;
@@ -86,6 +97,9 @@ public class Main {
     private boolean waitToEnableFeatureFlag = false;
     private final Object waitToEnableFeatureFlagLock = new Object();
 
+    //setting to true by default
+    private final Boolean bulkMigrationCronEnabled = System.getenv("BULK_MIGRATION_CRON_ENABLED") == null || Boolean.parseBoolean(System.getenv("BULK_MIGRATION_CRON_ENABLED"));
+
 
     private boolean forceInMemoryDB = false;
 
@@ -104,7 +118,7 @@ public class Main {
         try {
             suppressIllegalAccessWarning();
             if (Main.isTesting) {
-                System.out.println("Process ID: " + this.getProcessId());
+                // System.out.println("Process ID: " + this.getProcessId());
             }
             ProcessState.getInstance(this).addState(ProcessState.PROCESS_STATE.INIT, null);
             try {
@@ -112,6 +126,8 @@ public class Main {
                     CLIOptions.load(this, args);
                     init();
                 } catch (Exception e) {
+                    Logging.error(this, TenantIdentifier.BASE_TENANT, "What caused the crash: " + e.getMessage(), true,
+                            e);
                     ProcessState.getInstance(this).addState(ProcessState.PROCESS_STATE.INIT_FAILURE, e);
                     throw e;
                 }
@@ -146,9 +162,12 @@ public class Main {
         // Handle kill signal gracefully
         handleKillSignalForWhenItHappens();
 
+        StorageLayer.loadStorageUCL(CLIOptions.get(this).getInstallationPath() + "plugin/");
+
         // loading configs for core from config.yaml file.
         try {
             Config.loadBaseConfig(this);
+            Logging.info(this, TenantIdentifier.BASE_TENANT, "Completed config.yaml loading.", true);
         } catch (InvalidConfigException e) {
             throw new QuitProgramException(e);
         }
@@ -156,18 +175,20 @@ public class Main {
         // loading version file
         Version.loadVersion(this, CLIOptions.get(this).getInstallationPath() + "version.yaml");
 
-        Logging.info(this, TenantIdentifier.BASE_TENANT, "Completed config.yaml loading.", true);
+        TelemetryProvider.initialize(this);
 
         // loading storage layer
         try {
-            StorageLayer.initPrimary(this, CLIOptions.get(this).getInstallationPath() + "plugin/",
-                    Config.getBaseConfigAsJsonObject(this));
+            StorageLayer.initPrimary(this, Config.getBaseConfigAsJsonObject(this));
         } catch (InvalidConfigException e) {
             throw new QuitProgramException(e);
         }
 
         // init file logging
         Logging.initFileLogging(this);
+
+        // Note: SAMLBootstrap.initialize() is now called lazily when SAML features are first used
+        // This avoids the overhead of OpenSAML initialization for processes that don't use SAML
 
         // initialise cron job handler
         Cronjobs.init(this);
@@ -188,6 +209,28 @@ public class Main {
             throw new QuitProgramException(e);
         }
 
+        // Verify once, at startup, that the base database has every table/column this version needs. This is
+        // deliberately separate from initStorage (re-entered on tenant refresh / pool re-creation). How a
+        // mismatch (a skipped manual "### Migration" step) is handled depends on schema_check_strict_mode:
+        // strict (the default) refuses to start; non-strict logs it and boots, with only the queries touching
+        // the missing schema failing (they carry a schema-mismatch hint pointing at these logs).
+        boolean schemaCheckStrictMode = Config.getBaseConfig(this).getSchemaCheckStrictMode();
+        try {
+            StorageLayer.getBaseStorage(this).verifySchema(schemaCheckStrictMode);
+        } catch (SchemaMismatchException e) {
+            if (schemaCheckStrictMode) {
+                throw new QuitProgramException(e.getMessage());
+            }
+            Logging.error(this, TenantIdentifier.BASE_TENANT, e.getMessage(), true, e);
+            ProcessState.getInstance(this).addState(ProcessState.PROCESS_STATE.SCHEMA_MISMATCH, e);
+        } catch (StorageQueryException e) {
+            if (schemaCheckStrictMode) {
+                throw new QuitProgramException(e);
+            }
+            Logging.error(this, TenantIdentifier.BASE_TENANT,
+                    "Could not verify the database schema at startup", false, e);
+        }
+
         // enable ee features if license key is provided.
         synchronized (waitToEnableFeatureFlagLock) {
             while (waitToEnableFeatureFlag) {
@@ -206,7 +249,8 @@ public class Main {
 
             if (!StorageLayer.isInMemDb(this)) {
                 // we want to init storage connection once again so that the base storage also contains the right
-                // tenant identifier set passed to the init. So we call the resetPostConnectCallbackForBaseTenantStorage.
+                // tenant identifier set passed to the init. So we call the
+                // resetPostConnectCallbackForBaseTenantStorage.
                 StorageLayer.getBaseStorage(this).close();
             }
 
@@ -255,6 +299,28 @@ public class Main {
         // starts DeleteExpiredAccessTokenSigningKeys cronjob if the access token signing keys can change
         Cronjobs.addCronjob(this, DeleteExpiredAccessTokenSigningKeys.init(this, uniqueUserPoolIdsTenants));
 
+        // initializes ProcessBulkImportUsers cronjob to process bulk import users
+        if(bulkMigrationCronEnabled) {
+            Cronjobs.addCronjob(this, ProcessBulkImportUsers.init(this, uniqueUserPoolIdsTenants));
+        }
+
+        // Backfill reservation tables — self-skips when migration_mode is LEGACY
+        Cronjobs.addCronjob(this, BackfillReservationTables.init(this, uniqueUserPoolIdsTenants));
+
+        Cronjobs.addCronjob(this, CleanupOAuthSessionsAndChallenges.init(this, uniqueUserPoolIdsTenants));
+
+        Cronjobs.addCronjob(this, CleanUpWebauthNExpiredDataCron.init(this, uniqueUserPoolIdsTenants));
+
+        // pre-creates upcoming month partitions for the activity_log table and drops old ones
+        Cronjobs.addCronjob(this, CleanupActivityLogPartitions.init(this, uniqueUserPoolIdsTenants));
+
+        // starts the DeadlockLogger if
+        if (Config.getBaseConfig(this).isDeadlockLoggerEnabled()) {
+            DeadlockLogger.getInstance().start();
+        }
+      
+        Cronjobs.addCronjob(this, DeleteExpiredSAMLData.init(this, uniqueUserPoolIdsTenants));
+
         // this is to ensure tenantInfos are in sync for the new cron job as well
         MultitenancyHelper.getInstance(this).refreshCronjobs();
 
@@ -265,6 +331,7 @@ public class Main {
         Webserver.getInstance(this).start();
 
         // this is a sign to the controlling script that this process has started.
+
         createDotStartedFileForThisProcess();
 
         // NOTE: If the message below is changed, make sure to also change the corresponding check in the CLI program
@@ -343,11 +410,16 @@ public class Main {
     }
 
     private void createDotStartedFileForThisProcess() throws IOException {
+        String startedDir = ".started";
+        if (isTesting) {
+            startedDir = ".started" + System.getProperty("org.gradle.test.worker", "");
+        }
         CoreConfig config = Config.getBaseConfig(this);
+        String fileLocation = CLIOptions.get(this).getTempDirLocation() == null ? CLIOptions.get(this).getInstallationPath() : CLIOptions.get(this).getTempDirLocation();
         String fileName = OperatingSystem.getOS() == OperatingSystem.OS.WINDOWS
-                ? CLIOptions.get(this).getInstallationPath() + ".started\\" + config.getHost(this) + "-"
+                ? fileLocation + startedDir + "\\" + config.getHost(this) + "-"
                 + config.getPort(this)
-                : CLIOptions.get(this).getInstallationPath() + ".started/" + config.getHost(this) + "-"
+                : fileLocation + startedDir + "/" + config.getHost(this) + "-"
                 + config.getPort(this);
         File dotStarted = new File(fileName);
         if (!dotStarted.exists()) {
@@ -390,9 +462,15 @@ public class Main {
 
     @TestOnly
     public void killForTestingAndWaitForShutdown() throws InterruptedException {
-        assertIsTesting();
-        wakeUpMainThreadToShutdown();
-        mainThread.join();
+        // Do not kill for now
+         assertIsTesting();
+         wakeUpMainThreadToShutdown();
+         mainThread.join(60_000); // 60s timeout to prevent infinite hang
+         if (mainThread.isAlive()) {
+             System.err.println("[TEST] WARNING: Main thread did not shut down within 60s, interrupting...");
+             mainThread.interrupt();
+             mainThread.join(5_000); // Give it 5 more seconds after interrupt
+         }
     }
 
     // must not throw any error
@@ -421,6 +499,7 @@ public class Main {
             StorageLayer.close(this);
             removeDotStartedFileForThisProcess();
             Logging.stopLogging(this);
+            TelemetryProvider.closeTelemetry(this);
             // uncomment this when you want to confirm that processes are actually shut.
             // printRunningThreadNames();
 

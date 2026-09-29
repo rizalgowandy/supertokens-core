@@ -41,7 +41,8 @@ public class UserRolesQueries {
                 + "app_id VARCHAR(64) DEFAULT 'public',"
                 + "role VARCHAR(255) NOT NULL,"
                 + "PRIMARY KEY(app_id, role),"
-                + "CONSTRAINT " + tableName + "_app_id_fkey FOREIGN KEY (app_id) REFERENCES " + Config.getConfig(start).getAppsTable()
+                + "CONSTRAINT " + tableName + "_app_id_fkey FOREIGN KEY (app_id) REFERENCES " +
+                Config.getConfig(start).getAppsTable()
                 + " (app_id) ON DELETE CASCADE"
                 + ");";
         // @formatter:on
@@ -63,6 +64,11 @@ public class UserRolesQueries {
     static String getQueryToCreateRolePermissionsPermissionIndex(Start start) {
         return "CREATE INDEX role_permissions_permission_index ON "
                 + Config.getConfig(start).getUserRolesPermissionsTable() + "(app_id, permission);";
+    }
+
+    public static String getQueryToCreateUserRolesUserIdAppIdIndex(Start start) {
+        return "CREATE INDEX user_roles_app_id_user_id_index ON " + Config.getConfig(start).getUserRolesTable() +
+                "(app_id, user_id)";
     }
 
     public static String getQueryToCreateUserRolesTable(Start start) {
@@ -112,13 +118,14 @@ public class UserRolesQueries {
     }
 
     public static boolean deleteRole(Start start, AppIdentifier appIdentifier,
-                                                 String role) throws SQLException, StorageQueryException {
+                                     String role) throws SQLException, StorageQueryException {
 
         try {
             return start.startTransaction(con -> {
                 // Row lock must be taken to delete the role, otherwise the table may be locked for delete
                 Connection sqlCon = (Connection) con.getConnection();
-                ((ConnectionWithLocks) sqlCon).lock(appIdentifier.getAppId() + "~" + role + Config.getConfig(start).getRolesTable());
+                ((ConnectionWithLocks) sqlCon).lock(
+                        appIdentifier.getAppId() + "~" + role + Config.getConfig(start).getRolesTable());
 
                 String QUERY = "DELETE FROM " + getConfig(start).getRolesTable()
                         + " WHERE app_id = ? AND role = ? ;";
@@ -241,7 +248,8 @@ public class UserRolesQueries {
     public static boolean doesRoleExist_transaction(Start start, Connection con, AppIdentifier appIdentifier,
                                                     String role)
             throws SQLException, StorageQueryException {
-        ((ConnectionWithLocks) con).lock(appIdentifier.getAppId() + "~" + role + Config.getConfig(start).getRolesTable());
+        ((ConnectionWithLocks) con).lock(
+                appIdentifier.getAppId() + "~" + role + Config.getConfig(start).getRolesTable());
 
         String QUERY = "SELECT 1 FROM " + getConfig(start).getRolesTable()
                 + " WHERE app_id = ? AND role = ?";

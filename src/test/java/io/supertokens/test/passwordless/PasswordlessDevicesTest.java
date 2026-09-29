@@ -44,6 +44,9 @@ public class PasswordlessDevicesTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -65,7 +68,7 @@ public class PasswordlessDevicesTest {
 
         int NUMBER_OF_CODES_TO_GENERATE = 5;
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -117,7 +120,7 @@ public class PasswordlessDevicesTest {
     @Test
     public void getDeviceWithCodesByInvalidId() throws Exception {
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -146,7 +149,7 @@ public class PasswordlessDevicesTest {
 
         int NUMBER_OF_CODES_TO_GENERATE = 5;
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -198,7 +201,7 @@ public class PasswordlessDevicesTest {
     @Test
     public void getDevicesFromInvalidHashID() throws Exception {
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -228,7 +231,7 @@ public class PasswordlessDevicesTest {
 
         int NUMBER_OF_CODES_TO_GENERATE = 5;
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -280,7 +283,7 @@ public class PasswordlessDevicesTest {
     @Test
     public void getDevicesFromInvalidEmail() throws Exception {
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -310,7 +313,7 @@ public class PasswordlessDevicesTest {
 
         int NUMBER_OF_CODES_TO_GENERATE = 5;
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -363,7 +366,7 @@ public class PasswordlessDevicesTest {
     @Test
     public void getDevicesFromInvalidPhoneNumber() throws Exception {
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));

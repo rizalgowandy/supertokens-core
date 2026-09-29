@@ -22,6 +22,7 @@ import io.supertokens.ResourceDistributor;
 import io.supertokens.featureflag.exceptions.InvalidLicenseKeyException;
 import io.supertokens.featureflag.exceptions.NoLicenseKeyFoundException;
 import io.supertokens.httpRequest.HttpResponseException;
+import io.supertokens.output.Logging;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
@@ -34,6 +35,7 @@ import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -107,7 +109,7 @@ public class FeatureFlag extends ResourceDistributor.SingletonResource {
     public static FeatureFlag getInstance(Main main) {
         try {
             return (FeatureFlag) main.getResourceDistributor()
-                    .getResource(new AppIdentifier(null, null), RESOURCE_KEY);
+                    .getResource(ResourceDistributor.getAppForTesting(), RESOURCE_KEY);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
         }
@@ -125,35 +127,27 @@ public class FeatureFlag extends ResourceDistributor.SingletonResource {
 
     public static void loadForAllTenants(Main main, List<AppIdentifier> apps,
                                          List<TenantIdentifier> tenantsThatChanged) {
-        try {
-            main.getResourceDistributor().withResourceDistributorLock(() -> {
-                Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> existingResources =
-                        main.getResourceDistributor()
-                                .getAllResourcesWithResourceKey(RESOURCE_KEY);
-                main.getResourceDistributor().clearAllResourcesWithResourceKey(RESOURCE_KEY);
-                for (AppIdentifier app : apps) {
-                    ResourceDistributor.SingletonResource resource = existingResources.get(
-                            new ResourceDistributor.KeyClass(
-                                    app,
-                                    RESOURCE_KEY));
-                    if (resource != null && !tenantsThatChanged.contains(app.getAsPublicTenantIdentifier())) {
-                        main.getResourceDistributor()
-                                .setResource(app,
-                                        RESOURCE_KEY,
-                                        resource);
-                    } else {
-                        main.getResourceDistributor()
-                                .setResource(
-                                        app,
-                                        RESOURCE_KEY,
-                                        new FeatureFlag(main, app));
-                    }
+        Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> existingResources =
+                main.getResourceDistributor()
+                        .getAllResourcesWithResourceKey(RESOURCE_KEY);
+        Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> newResources =
+                new HashMap<>();
+        for (AppIdentifier app : apps) {
+            try {
+                ResourceDistributor.SingletonResource resource = existingResources.get(
+                        new ResourceDistributor.KeyClass(app, RESOURCE_KEY));
+                if (resource != null && !tenantsThatChanged.contains(app.getAsPublicTenantIdentifier())) {
+                    newResources.put(new ResourceDistributor.KeyClass(app, RESOURCE_KEY), resource);
+                } else {
+                    newResources.put(new ResourceDistributor.KeyClass(app, RESOURCE_KEY),
+                            new FeatureFlag(main, app));
                 }
-                return null;
-            });
-        } catch (ResourceDistributor.FuncException e) {
-            throw new RuntimeException(e);
+            } catch (Exception e) {
+                Logging.error(main, app.getAsPublicTenantIdentifier(), e.getMessage(), false);
+                // continue loading other resources
+            }
         }
+        main.getResourceDistributor().replaceResourcesWithResourceKey(RESOURCE_KEY, newResources);
     }
 
     public EE_FEATURES[] getEnabledFeatures() throws StorageQueryException, TenantOrAppNotFoundException {

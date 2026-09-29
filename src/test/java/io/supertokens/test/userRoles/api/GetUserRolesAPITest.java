@@ -44,6 +44,9 @@ public class GetUserRolesAPITest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -56,7 +59,7 @@ public class GetUserRolesAPITest {
 
     @Test
     public void badInputTest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -100,7 +103,7 @@ public class GetUserRolesAPITest {
 
     @Test
     public void testGettingRolesForAUser() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -111,14 +114,14 @@ public class GetUserRolesAPITest {
 
         // create and add multiple roles to a user, get roles for user
         {
-            String[] roles = new String[] { "role1", "role2", "role3" };
+            String[] roles = new String[]{"role1", "role2", "role3"};
             String userId = "userId";
 
             for (String role : roles) {
                 // create role
-                UserRoles.createNewRoleOrModifyItsPermissions(process.main, role, null);
+                UserRoles.createNewRoleOrModifyItsPermissions(process.getProcess(), role, null);
                 // add role to User
-                UserRoles.addRoleToUser(process.main, userId, role);
+                UserRoles.addRoleToUser(process.getProcess(), userId, role);
             }
 
             HashMap<String, String> QUERY_PARAMS = new HashMap<>();

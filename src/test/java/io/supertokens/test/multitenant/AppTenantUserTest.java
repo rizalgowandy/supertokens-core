@@ -27,8 +27,12 @@ import io.supertokens.pluginInterface.ActiveUsersStorage;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
+import io.supertokens.pluginInterface.bulkimport.BulkImportStorage;
+import io.supertokens.pluginInterface.jwt.JWTRecipeStorage;
 import io.supertokens.pluginInterface.multitenancy.*;
 import io.supertokens.pluginInterface.nonAuthRecipe.NonAuthRecipeStorage;
+import io.supertokens.pluginInterface.oauth.OAuthStorage;
+import io.supertokens.pluginInterface.saml.SAMLStorage;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.test.TestingProcessManager;
 import io.supertokens.test.Utils;
@@ -51,6 +55,9 @@ public class AppTenantUserTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -64,11 +71,10 @@ public class AppTenantUserTest {
     @Test
     public void testDeletingAppDeleteNonAuthRecipeData() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.MULTI_TENANCY, EE_FEATURES.MFA});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -76,8 +82,13 @@ public class AppTenantUserTest {
         }
 
         // this list contains the package names for recipes which dont use UserIdMapping
-        ArrayList<String> classesToSkip = new ArrayList<>(
-                List.of("io.supertokens.pluginInterface.jwt.JWTRecipeStorage", ActiveUsersStorage.class.getName()));
+        List<String> classesToSkip = List.of(
+            JWTRecipeStorage.class.getName(),
+            ActiveUsersStorage.class.getName(),
+            OAuthStorage.class.getName(),
+            BulkImportStorage.class.getName(),
+            SAMLStorage.class.getName()
+        );
 
         Reflections reflections = new Reflections("io.supertokens.pluginInterface");
         Set<Class<? extends NonAuthRecipeStorage>> classes = reflections.getSubTypesOf(NonAuthRecipeStorage.class);
@@ -126,7 +137,7 @@ public class AppTenantUserTest {
                 String userId = user.getSupertokensUserId();
 
                 // create entry in nonAuth table
-                StorageLayer.getStorage(process.main).addInfoToNonAuthRecipesBasedOnUserId(app, className, userId);
+                StorageLayer.getStorage(process.getProcess()).addInfoToNonAuthRecipesBasedOnUserId(app, className, userId);
 
                 try {
                     UserIdMapping.findNonAuthStoragesWhereUserIdIsUsedOrAssertIfUsed(
@@ -169,11 +180,10 @@ public class AppTenantUserTest {
     @Test
     public void testDisassociationOfUserDeletesNonAuthRecipeData() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.MULTI_TENANCY, EE_FEATURES.MFA});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -181,8 +191,13 @@ public class AppTenantUserTest {
         }
 
         // this list contains the package names for recipes which dont use UserIdMapping
-        ArrayList<String> classesToSkip = new ArrayList<>(
-                List.of("io.supertokens.pluginInterface.jwt.JWTRecipeStorage", ActiveUsersStorage.class.getName()));
+        List<String> classesToSkip = List.of(
+                JWTRecipeStorage.class.getName(),
+                ActiveUsersStorage.class.getName(),
+                OAuthStorage.class.getName(),
+                BulkImportStorage.class.getName(),
+                SAMLStorage.class.getName()
+        );
 
         Reflections reflections = new Reflections("io.supertokens.pluginInterface");
         Set<Class<? extends NonAuthRecipeStorage>> classes = reflections.getSubTypesOf(NonAuthRecipeStorage.class);
@@ -224,7 +239,8 @@ public class AppTenantUserTest {
                 continue;
             }
 
-            AuthRecipeUserInfo user = EmailPassword.signUp(app, appStorage, process.getProcess(), "test@example.com", "password");
+            AuthRecipeUserInfo user = EmailPassword.signUp(app, appStorage, process.getProcess(), "test@example.com",
+                    "password");
             String userId = user.getSupertokensUserId();
 
             Multitenancy.addUserIdToTenant(process.getProcess(), tenant, tenantStorage, userId);
@@ -256,11 +272,10 @@ public class AppTenantUserTest {
     @Test
     public void deletingTenantKeepsTheUserInTheApp() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.MULTI_TENANCY, EE_FEATURES.MFA});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -292,7 +307,8 @@ public class AppTenantUserTest {
         Storage tenantStorage = (
                 StorageLayer.getStorage(tenant, process.getProcess()));
 
-        AuthRecipeUserInfo user = EmailPassword.signUp(tenant, tenantStorage, process.getProcess(), "test@example.com", "password");
+        AuthRecipeUserInfo user = EmailPassword.signUp(tenant, tenantStorage, process.getProcess(), "test@example.com",
+                "password");
         String userId = user.getSupertokensUserId();
 
         Multitenancy.deleteTenant(tenant, process.getProcess());

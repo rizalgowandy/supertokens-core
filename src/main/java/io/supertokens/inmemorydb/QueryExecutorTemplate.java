@@ -22,18 +22,19 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.List;
 
 public interface QueryExecutorTemplate {
 
     public static <T> T execute(Start start, String QUERY, PreparedStatementValueSetter setter,
-            ResultSetValueExtractor<T> mapper) throws SQLException, StorageQueryException {
+                                ResultSetValueExtractor<T> mapper) throws SQLException, StorageQueryException {
         try (Connection con = ConnectionPool.getConnection(start)) {
             return execute(con, QUERY, setter, mapper);
         }
     }
 
     public static <T> T execute(Connection con, String QUERY, PreparedStatementValueSetter setter,
-            ResultSetValueExtractor<T> mapper) throws SQLException, StorageQueryException {
+                                ResultSetValueExtractor<T> mapper) throws SQLException, StorageQueryException {
         if (setter == null)
             setter = PreparedStatementValueSetter.NO_OP_SETTER;
         try (PreparedStatement pst = con.prepareStatement(QUERY)) {
@@ -41,6 +42,26 @@ public interface QueryExecutorTemplate {
             try (ResultSet result = pst.executeQuery()) {
                 return mapper.extract(result);
             }
+        }
+    }
+
+    static void executeBatch(Connection connection, String QUERY, List<PreparedStatementValueSetter> setters)
+            throws SQLException, StorageQueryException {
+        if(setters == null || setters.isEmpty()) {
+            return;
+        }
+        try (PreparedStatement pst = connection.prepareStatement(QUERY)) {
+            int counter = 0;
+            for(PreparedStatementValueSetter setter: setters) {
+                setter.setValues(pst);
+                pst.addBatch();
+                counter++;
+
+                if(counter % 100 == 0) {
+                    pst.executeBatch();
+                }
+            }
+            pst.executeBatch(); //for the possible remaining ones
         }
     }
 

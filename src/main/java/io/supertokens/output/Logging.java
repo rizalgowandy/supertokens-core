@@ -16,11 +16,15 @@
 
 package io.supertokens.output;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.ConsoleAppender;
 import ch.qos.logback.core.FileAppender;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import io.supertokens.Main;
 import io.supertokens.ResourceDistributor;
 import io.supertokens.config.Config;
@@ -29,6 +33,7 @@ import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
 import io.supertokens.storageLayer.StorageLayer;
+import io.supertokens.telemetry.TelemetryProvider;
 import io.supertokens.utils.Utils;
 import io.supertokens.version.Version;
 import io.supertokens.webserver.Webserver;
@@ -51,6 +56,12 @@ public class Logging extends ResourceDistributor.SingletonResource {
     public static final String ANSI_WHITE = "\u001B[37m";
 
     private Logging(Main main) {
+        // Set global logging level
+        LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
+        Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+        Level newLevel = Level.toLevel(Config.getBaseConfig(main).getLogLevel(), Level.INFO); // Default to INFO if invalid
+        rootLogger.setLevel(newLevel);
+
         this.infoLogger = Config.getBaseConfig(main).getInfoLogPath(main).equals("null")
                 ? createLoggerForConsole(main, "io.supertokens.Info", LOG_LEVEL.INFO)
                 : createLoggerForFile(main, Config.getBaseConfig(main).getInfoLogPath(main),
@@ -62,7 +73,7 @@ public class Logging extends ResourceDistributor.SingletonResource {
         Storage storage = StorageLayer.getBaseStorage(main);
         if (storage != null) {
             storage.initFileLogging(Config.getBaseConfig(main).getInfoLogPath(main),
-                    Config.getBaseConfig(main).getErrorLogPath(main));
+                    Config.getBaseConfig(main).getErrorLogPath(main), TelemetryProvider.getInstance(main));
         }
         try {
             // we wait here for a bit so that the loggers can be properly initialised..
@@ -107,13 +118,40 @@ public class Logging extends ResourceDistributor.SingletonResource {
         }
         try {
             msg = msg.trim();
-            msg = prependTenantIdentifierToMessage(tenantIdentifier, msg);
             if (getInstance(main) != null) {
-                getInstance(main).infoLogger.debug(msg);
+                String formattedMsg = getFormattedMessage(tenantIdentifier, msg);
+                getInstance(main).infoLogger.debug(formattedMsg);
+                TelemetryProvider.getInstance(main).createLogEvent(tenantIdentifier, formattedMsg, "debug");
             }
         } catch (NullPointerException e) {
             // sometimes logger.debug throws a null pointer exception...
         }
+    }
+
+    private static String getFormattedMessage(TenantIdentifier tenantIdentifier, String msg, Exception e) {
+        JsonObject msgObj = new JsonObject();
+        msgObj.addProperty("message", msg);
+        msgObj.add("tenant", new JsonObject());
+        msgObj.getAsJsonObject("tenant").addProperty("connectionUriDomain", tenantIdentifier.getConnectionUriDomain());
+        msgObj.getAsJsonObject("tenant").addProperty("appId", tenantIdentifier.getAppId());
+        msgObj.getAsJsonObject("tenant").addProperty("tenantId", tenantIdentifier.getTenantId());
+
+        if (e != null) {
+            String stackTrace = Utils.throwableStacktraceToString(e);
+            String[] stackTraceArr = stackTrace.split("\n");
+            JsonArray stackTraceArrObj = new JsonArray();
+            for (String stackTraceElement : stackTraceArr) {
+                stackTraceArrObj.add(new JsonPrimitive(stackTraceElement));
+            }
+
+            msgObj.add("exception", stackTraceArrObj);
+        }
+
+        return msgObj.toString();
+    }
+
+    private static String getFormattedMessage(TenantIdentifier tenantIdentifier, String msg) {
+        return getFormattedMessage(tenantIdentifier, msg, null);
     }
 
     public static void info(Main main, TenantIdentifier tenantIdentifier, String msg, boolean toConsoleAsWell) {
@@ -129,10 +167,13 @@ public class Logging extends ResourceDistributor.SingletonResource {
                     systemOut(prependTenantIdentifierToMessage(tenantIdentifier, msg));
                 }
             }
-            msg = prependTenantIdentifierToMessage(tenantIdentifier, msg);
+            msg = getFormattedMessage(tenantIdentifier, msg);
+
             if (getInstance(main) != null) {
                 getInstance(main).infoLogger.info(msg);
             }
+
+            TelemetryProvider.getInstance(main).createLogEvent(tenantIdentifier, msg, "info");
         } catch (NullPointerException ignored) {
         }
     }
@@ -143,9 +184,10 @@ public class Logging extends ResourceDistributor.SingletonResource {
         }
         try {
             msg = msg.trim();
-            msg = prependTenantIdentifierToMessage(tenantIdentifier, msg);
+            msg = getFormattedMessage(tenantIdentifier, msg);
             if (getInstance(main) != null) {
                 getInstance(main).errorLogger.warn(msg);
+                TelemetryProvider.getInstance(main).createLogEvent(tenantIdentifier, msg, "warn");
             }
         } catch (NullPointerException ignored) {
         }
@@ -164,12 +206,13 @@ public class Logging extends ResourceDistributor.SingletonResource {
         }
         try {
             err = err.trim();
-            err = prependTenantIdentifierToMessage(tenantIdentifier, err);
             if (getInstance(main) != null) {
-                getInstance(main).errorLogger.error(err);
+                String formattedMessage = getFormattedMessage(tenantIdentifier, err);
+                getInstance(main).errorLogger.error(formattedMessage);
+                TelemetryProvider.getInstance(main).createLogEvent(tenantIdentifier, formattedMessage, "error");
             }
             if (toConsoleAsWell || getInstance(main) == null) {
-                systemErr(err);
+                systemErr(prependTenantIdentifierToMessage(tenantIdentifier, err));
             }
         } catch (NullPointerException ignored) {
         }
@@ -190,19 +233,22 @@ public class Logging extends ResourceDistributor.SingletonResource {
         try {
             String err = Utils.throwableStacktraceToString(e).trim();
             if (getInstance(main) != null) {
-                err = prependTenantIdentifierToMessage(tenantIdentifier, err);
-                getInstance(main).errorLogger.error(err);
+                // Not required to log here as the error is already included in the formatted message
+                // err = getFormattedMessage(tenantIdentifier, err);
+                // getInstance(main).errorLogger.error(err);
             } else if (Main.isTesting) {
                 systemErr(err);
             }
             if (message != null) {
                 message = message.trim();
-                message = prependTenantIdentifierToMessage(tenantIdentifier, message);
                 if (getInstance(main) != null) {
-                    getInstance(main).errorLogger.error(message);
+                    getInstance(main).errorLogger.error(getFormattedMessage(tenantIdentifier, message, e));
+                    TelemetryProvider.getInstance(main)
+                            .createLogEvent(tenantIdentifier, getFormattedMessage(tenantIdentifier, message, e),
+                                    "error");
                 }
                 if (toConsoleAsWell || getInstance(main) == null) {
-                    systemErr(message);
+                    systemErr(prependTenantIdentifierToMessage(tenantIdentifier, message));
                 }
             }
         } catch (NullPointerException ignored) {
@@ -235,7 +281,8 @@ public class Logging extends ResourceDistributor.SingletonResource {
 
     private Logger createLoggerForFile(Main main, String file, String name) {
         LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
-        LayoutWrappingEncoder ple = new LayoutWrappingEncoder(main.getProcessId(), Version.getVersion(main).getCoreVersion());
+        LayoutWrappingEncoder ple = new LayoutWrappingEncoder(main.getProcessId(),
+                Version.getVersion(main).getCoreVersion());
         ple.setContext(lc);
         ple.start();
         FileAppender<ILoggingEvent> fileAppender = new FileAppender<>();
@@ -253,7 +300,8 @@ public class Logging extends ResourceDistributor.SingletonResource {
 
     private Logger createLoggerForConsole(Main main, String name, LOG_LEVEL logLevel) {
         LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
-        LayoutWrappingEncoder ple = new LayoutWrappingEncoder(main.getProcessId(), Version.getVersion(main).getCoreVersion());
+        LayoutWrappingEncoder ple = new LayoutWrappingEncoder(main.getProcessId(),
+                Version.getVersion(main).getCoreVersion());
         ple.setContext(lc);
         ple.start();
         ConsoleAppender<ILoggingEvent> logConsoleAppender = new ConsoleAppender<>();

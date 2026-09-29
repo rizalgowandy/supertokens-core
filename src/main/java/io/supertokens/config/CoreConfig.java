@@ -19,16 +19,18 @@ package io.supertokens.config;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import io.supertokens.Main;
 import io.supertokens.cliOptions.CLIOptions;
-import io.supertokens.config.annotations.ConfigYamlOnly;
-import io.supertokens.config.annotations.IgnoreForAnnotationCheck;
-import io.supertokens.config.annotations.NotConflictingInApp;
+import io.supertokens.config.annotations.*;
+import io.supertokens.pluginInterface.ConfigFieldInfo;
 import io.supertokens.pluginInterface.LOG_LEVEL;
 import io.supertokens.pluginInterface.exceptions.InvalidConfigException;
+import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
+import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
 import io.supertokens.utils.SemVer;
 import io.supertokens.webserver.Utils;
 import io.supertokens.webserver.WebserverAPI;
@@ -39,124 +41,259 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.*;
 import java.util.regex.PatternSyntaxException;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class CoreConfig {
 
+    // Annotations and their meaning
+    // @ConfigDescription: This is a description of the config field. Note that this description should match with the
+    // description in the config.yaml and devConfig.yaml file.
+    // @EnumProperty: The property has fixed set of values (like an enum)
+    // @ConfigYamlOnly: The property is configurable only from the config.yaml file.
+    // @NotConflictingInApp: The property cannot have different values for tenants within an app
+    // @IgnoreForAnnotationCheck: Set this if the property is neither @ConfigYamlOnly nor @NotConflictingInApp, or should
+    // simply be ignored by the test (if the property is just an internal member and not an exposed config) that checks
+    // for annotations on all properties.
+    // @HideFromDashboard: The property should not be shown in the dashboard
+
     @IgnoreForAnnotationCheck
     public static final String[] PROTECTED_CONFIGS = new String[]{
             "ip_allow_regex",
             "ip_deny_regex",
+            "oauth_provider_public_service_url",
+            "oauth_provider_admin_service_url",
+            "oauth_provider_consent_login_base_url",
+            "oauth_provider_url_configured_in_oauth_provider",
+            "saml_legacy_acs_url"
     };
 
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription("The version of the core config.")
     private int core_config_version = -1;
 
+    @EnvName("ACCESS_TOKEN_VALIDITY")
     @NotConflictingInApp
     @JsonProperty
+    @ConfigDescription("Time in seconds for how long an access token is valid for. [Default: 3600 (1 hour)]")
     private long access_token_validity = 3600; // in seconds
 
+    @EnvName("ACCESS_TOKEN_BLACKLISTING")
     @NotConflictingInApp
     @JsonProperty
+    @ConfigDescription(
+            "Deprecated, please see changelog. Only used in CDI<=2.18 If true, allows for immediate revocation of any" +
+                    " access token. Keep in mind that setting this to true will result in a db query for each API " +
+                    "call that requires authentication. (Default: false)")
     private boolean access_token_blacklisting = false;
 
+    @EnvName("REFRESH_TOKEN_VALIDITY")
     @NotConflictingInApp
     @JsonProperty
+    @ConfigDescription("Time in mins for how long a refresh token is valid for. [Default: 60 * 2400 (100 days)]")
     private double refresh_token_validity = 60 * 2400; // in mins
 
+    @EnvName("REFRESH_TOKEN_ROTATION_GRACE_PERIOD")
+    @NotConflictingInApp
+    @JsonProperty
+    @ConfigDescription(
+            "Time in seconds for how long the previously active refresh token remains accepted after a rotation. "
+                    + "[Default: 30]")
+    private int refresh_token_rotation_grace_period = 30; // in seconds
+
+    @EnvName("ACCESS_TOKEN_VALIDITY_JITTER")
+    @NotConflictingInApp
+    @JsonProperty
+    @ConfigDescription(
+            "Fraction between 0 and 0.25 by which access token validity is randomly shortened at issuance. Applied "
+                    + "subtractively so the token expiry is never lengthened. Set to 0 to disable. [Default: 0.05]")
+    private double access_token_validity_jitter = 0.05;
+
+    @EnvName("RECENT_TOKEN_REUSE_BEHAVIOUR")
+    @ConfigYamlOnly
+    @JsonProperty
+    @ConfigDescription(
+            "How the reuse of a recently rotated-out refresh token is reported. Values are \"TOKEN_THEFT\" | "
+                    + "\"UNAUTHORISED\". The session is revoked regardless of this setting. (Default: TOKEN_THEFT)")
+    @EnumProperty({"TOKEN_THEFT", "UNAUTHORISED"})
+    private String recent_token_reuse_behaviour = "TOKEN_THEFT";
+
+    @EnvName("SCHEMA_CHECK_STRICT_MODE")
+    @ConfigYamlOnly
+    @JsonProperty
+    @ConfigDescription(
+            "If true, the core refuses to start when the base database is missing tables or columns this version "
+                    + "needs (a skipped manual migration), and tenant databases with a mismatched schema are not "
+                    + "served. If false, mismatches are only logged and just the queries touching the missing "
+                    + "schema fail. (Default: true)")
+    private boolean schema_check_strict_mode = true;
+
+    @EnvName("PASSWORD_RESET_TOKEN_LIFETIME")
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription(
+            "Time in milliseconds for how long a password reset token / link is valid for. [Default: 3600000 (1 hour)]")
     private long password_reset_token_lifetime = 3600000; // in MS
 
+    @EnvName("EMAIL_VERIFICATION_TOKEN_LIFETIME")
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription(
+            "Time in milliseconds for how long an email verification token / link is valid for. [Default: 24 * 3600 *" +
+                    " 1000 (1 day)]")
     private long email_verification_token_lifetime = 24 * 3600 * 1000; // in MS
 
+    @EnvName("PASSWORDLESS_MAX_CODE_INPUT_ATTEMPTS")
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription(
+            "The maximum number of code input attempts per login before the user needs to restart. (Default: 5)")
     private int passwordless_max_code_input_attempts = 5;
 
+    @EnvName("PASSWORDLESS_CODE_LIFETIME")
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription(
+            "Time in milliseconds for how long a passwordless code is valid for. [Default: 900000 (15 mins)]")
     private long passwordless_code_lifetime = 900000; // in MS
 
+    @EnvName("TOTP_MAX_ATTEMPTS")
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription("The maximum number of invalid TOTP attempts that will trigger rate limiting. (Default: 5)")
     private int totp_max_attempts = 5;
 
+    @EnvName("TOTP_RATE_LIMIT_COOLDOWN_SEC")
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription(
+            "The time in seconds for which the user will be rate limited once totp_max_attempts is crossed. [Default:" +
+                    " 900 (15 mins)]")
     private int totp_rate_limit_cooldown_sec = 900; // in seconds (Default 15 mins)
 
     @IgnoreForAnnotationCheck
     private final String logDefault = "asdkfahbdfk3kjHS";
 
+    @EnvName("INFO_LOG_PATH")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription(
+            "Give the path to a file (on your local system) in which the SuperTokens service can write INFO logs to. " +
+                    "Set it to \"null\" if you want it to log to standard output instead. (Default: installation " +
+                    "directory/logs/info.log)")
     private String info_log_path = logDefault;
 
+    @EnvName("ERROR_LOG_PATH")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription(
+            "Give the path to a file (on your local system) in which the SuperTokens service can write ERROR logs to." +
+                    " Set it to \"null\" if you want it to log to standard error instead. (Default: installation " +
+                    "directory/logs/error.log)")
     private String error_log_path = logDefault;
 
+    @EnvName("ACCESS_TOKEN_SIGNING_KEY_DYNAMIC")
     @NotConflictingInApp
     @JsonProperty
+    @ConfigDescription(
+            "Deprecated, please see changelog. If this is set to true, the access tokens created using CDI<=2.18 will" +
+                    " be signed using a static signing key. (Default: true)")
     private boolean access_token_signing_key_dynamic = true;
 
+    @EnvName("ACCESS_TOKEN_DYNAMIC_SIGNING_KEY_UPDATE_INTERVAL")
     @NotConflictingInApp
     @JsonProperty("access_token_dynamic_signing_key_update_interval")
     @JsonAlias({"access_token_dynamic_signing_key_update_interval", "access_token_signing_key_update_interval"})
+    @ConfigDescription("Time in hours for how frequently the dynamic signing key will change. [Default: 168 (1 week)]")
     private double access_token_dynamic_signing_key_update_interval = 168; // in hours
 
+    @EnvName("SUPERTOKENS_PORT")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription("The port at which SuperTokens service runs. (Default: 3567)")
     private int port = 3567;
 
+    @EnvName("SUPERTOKENS_HOST")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription(
+            "The host on which SuperTokens service runs. Values here can be localhost, example.com, 0.0.0.0 or any IP" +
+                    " address associated with your machine. (Default: localhost)")
     private String host = "localhost";
 
+    @EnvName("MAX_SERVER_POOL_SIZE")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription("Sets the max thread pool size for incoming http server requests. (Default: 10)")
     private int max_server_pool_size = 10;
 
+    @EnvName("API_KEYS")
     @NotConflictingInApp
     @JsonProperty
+    @HideFromDashboard
+    @ConfigDescription(
+            "The API keys to query an instance using this config file. The format is \"key1,key2,key3\". Keys can " +
+                    "only contain '=', '-' and alpha-numeric (including capital) chars. Each key must have a minimum " +
+                    "length of 20 chars. (Default: null)")
     private String api_keys = null;
 
+    @EnvName("DISABLE_TELEMETRY")
     @NotConflictingInApp
     @JsonProperty
+    @ConfigDescription(
+            "Learn more about Telemetry here: https://github.com/supertokens/supertokens-core/wiki/Telemetry. " +
+                    "(Default: false)")
     private boolean disable_telemetry = false;
 
+    @EnvName("PASSWORD_HASHING_ALG")
     @NotConflictingInApp
     @JsonProperty
+    @ConfigDescription("The password hashing algorithm to use. Values are \"ARGON2\" | \"BCRYPT\". (Default: BCRYPT)")
+    @EnumProperty({"ARGON2", "BCRYPT"})
     private String password_hashing_alg = "BCRYPT";
 
+    @EnvName("ARGON2_ITERATIONS")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription("Number of iterations for argon2 password hashing. (Default: 1)")
     private int argon2_iterations = 1;
 
+    @EnvName("ARGON2_MEMORY_KB")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription("Amount of memory in kb for argon2 password hashing. [Default: 87795 (85 mb)]")
     private int argon2_memory_kb = 87795; // 85 mb
 
+    @EnvName("ARGON2_PARALLELISM")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription("Amount of parallelism for argon2 password hashing. (Default: 2)")
     private int argon2_parallelism = 2;
 
+    @EnvName("ARGON2_HASHING_POOL_SIZE")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription(
+            "Number of concurrent argon2 hashes that can happen at the same time for sign up or sign in requests. " +
+                    "(Default: 1)")
     private int argon2_hashing_pool_size = 1;
 
+    @EnvName("FIREBASE_PASSWORD_HASHING_POOL_SIZE")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription(
+            "Number of concurrent firebase scrypt hashes that can happen at the same time for sign in requests. " +
+                    "(Default: 1)")
     private int firebase_password_hashing_pool_size = 1;
 
+    @EnvName("BCRYPT_LOG_ROUNDS")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription("Number of rounds to set for bcrypt password hashing. (Default: 11)")
     private int bcrypt_log_rounds = 11;
 
     // TODO: add https in later version
@@ -169,45 +306,207 @@ public class CoreConfig {
     // # webserver_https_enabled:
     @ConfigYamlOnly
     @JsonProperty
+    @IgnoreForAnnotationCheck
     private boolean webserver_https_enabled = false;
 
+    @EnvName("BASE_PATH")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription("Used to prepend a base path to all APIs when querying the core.")
     private String base_path = "";
 
+    @EnvName("LOG_LEVEL")
     @ConfigYamlOnly
     @JsonProperty
+    @ConfigDescription(
+            "Logging level for the core. Values are \"DEBUG\" | \"INFO\" | \"WARN\" | \"ERROR\" | \"NONE\". (Default:" +
+                    " INFO)")
+    @EnumProperty({"DEBUG", "INFO", "WARN", "ERROR", "NONE"})
     private String log_level = "INFO";
 
+    @EnvName("FIREBASE_PASSWORD_HASHING_SIGNER_KEY")
     @NotConflictingInApp
     @JsonProperty
+    @ConfigDescription("The signer key used for firebase scrypt password hashing. (Default: null)")
     private String firebase_password_hashing_signer_key = null;
 
+    @EnvName("IP_ALLOW_REGEX")
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription(
+            "Regex for allowing requests from IP addresses that match with the value. For example, use the value of " +
+                    "127\\.\\d+\\.\\d+\\.\\d+|::1|0:0:0:0:0:0:0:1 to allow only localhost to query the core")
     private String ip_allow_regex = null;
 
+    @EnvName("IP_DENY_REGEX")
     @IgnoreForAnnotationCheck
     @JsonProperty
+    @ConfigDescription(
+            "Regex for denying requests from IP addresses that match with the value. Comment this value to deny no IP" +
+                    " address.")
     private String ip_deny_regex = null;
 
-    @ConfigYamlOnly
-    @JsonProperty
-    private String supertokens_saas_secret = null;
-
+    @EnvName("OAUTH_PROVIDER_PUBLIC_SERVICE_URL")
     @NotConflictingInApp
     @JsonProperty
-    private String supertokens_max_cdi_version = null;
+    @HideFromDashboard
+    @ConfigDescription(
+            "If specified, the core uses this URL to connect to the OAuth provider public service.")
+    private String oauth_provider_public_service_url = null;
 
+    @EnvName("OAUTH_PROVIDER_ADMIN_SERVICE_URL")
+    @NotConflictingInApp
+    @JsonProperty
+    @HideFromDashboard
+    @ConfigDescription(
+            "If specified, the core uses this URL to connect to the OAuth provider admin service.")
+    private String oauth_provider_admin_service_url = null;
+
+    @EnvName("OAUTH_PROVIDER_CONSENT_LOGIN_BASE_URL")
+    @NotConflictingInApp
+    @JsonProperty
+    @HideFromDashboard
+    @ConfigDescription(
+            "If specified, the core uses this URL to replace the default consent and login URLs to {apiDomain}.")
+    private String oauth_provider_consent_login_base_url = null;
+
+    @EnvName("OAUTH_PROVIDER_URL_CONFIGURED_IN_OAUTH_PROVIDER")
+    @NotConflictingInApp
+    @JsonProperty
+    @HideFromDashboard
+    @ConfigDescription(
+            "If specified, the core uses this URL to parse responses from the oauth provider when the oauth provider's internal address differs from the known public provider address.")
+    private String oauth_provider_url_configured_in_oauth_provider = null;
+
+    @EnvName("OAUTH_CLIENT_SECRET_ENCRYPTION_KEY")
     @ConfigYamlOnly
     @JsonProperty
+    @HideFromDashboard
+    @ConfigDescription("The encryption key used for saving OAuth client secret on the database.")
+    private String oauth_client_secret_encryption_key = null;
+
+    @EnvName("SUPERTOKENS_SAAS_SECRET")
+    @ConfigYamlOnly
+    @JsonProperty
+    @ConfigDescription(
+            "This is used when deploying the core in SuperTokens SaaS infrastructure. If set, limits what database " +
+                    "information is shown to / modifiable by the dev when they query the core to get the information " +
+                    "about their tenants. It only exposes that information when this key is used instead of the " +
+                    "regular api_keys config.")
+    private String supertokens_saas_secret = null;
+
+    @EnvName("SUPERTOKENS_MAX_CDI_VERSION")
+    @NotConflictingInApp
+    @JsonProperty
+    @HideFromDashboard
+    @ConfigDescription(
+            "This is used when the core needs to assume a specific CDI version when CDI version is not specified in " +
+                    "the request. When set to null, the core will assume the latest version of the CDI. (Default: " +
+                    "null)")
+    private String supertokens_max_cdi_version = null;
+
+    @EnvName("SUPERTOKENS_MIN_CDI_VERSION")
+    @NotConflictingInApp
+    @JsonProperty
+    @HideFromDashboard
+    @ConfigDescription(
+            "The minimum CDI version that the core will accept. Requests using a CDI version lower than this are " +
+                    "rejected with a 400. When set to null, all CDI versions supported by the core are accepted. " +
+                    "(Default: null)")
+    private String supertokens_min_cdi_version = null;
+
+    @EnvName("SUPERTOKENS_SAAS_LOAD_ONLY_CUD")
+    @ConfigYamlOnly
+    @JsonProperty
+    @ConfigDescription(
+            "If specified, the supertokens service will only load the specified CUD even if there are more CUDs in " +
+                    "the database and block all other CUDs from being used from this instance.")
     private String supertokens_saas_load_only_cud = null;
+
+    @EnvName("SAML_LEGACY_ACS_URL")
+    @NotConflictingInApp
+    @JsonProperty
+    @ConfigDescription("If specified, uses this URL as ACS URL for handling legacy SAML clients")
+    @HideFromDashboard
+    private String saml_legacy_acs_url = null;
+
+    @EnvName("SAML_SP_ENTITY_ID")
+    @JsonProperty
+    @IgnoreForAnnotationCheck
+    @ConfigDescription("Service provider's entity ID")
+    private String saml_sp_entity_id = null;
+
+    @EnvName("SAML_CLAIMS_VALIDITY")
+    @JsonProperty
+    @IgnoreForAnnotationCheck
+    @ConfigDescription("Duration for which SAML claims will be valid before it is consumed")
+    private long saml_claims_validity = 300000;
+
+    @EnvName("SAML_RELAY_STATE_VALIDITY")
+    @JsonProperty
+    @IgnoreForAnnotationCheck
+    @ConfigDescription("Duration for which SAML relay state will be valid before it is consumed")
+    private long saml_relay_state_validity = 300000;
 
     @IgnoreForAnnotationCheck
     private Set<LOG_LEVEL> allowedLogLevels = null;
 
     @IgnoreForAnnotationCheck
     private boolean isNormalizedAndValid = false;
+
+    @EnvName("BULK_MIGRATION_PARALLELISM")
+    @NotConflictingInApp
+    @JsonProperty
+    @ConfigDescription("If specified, the supertokens core will use the specified number of threads to complete the " +
+            "migration of users. (Default: number of available processor cores).")
+    private int bulk_migration_parallelism =  Runtime.getRuntime().availableProcessors();
+
+    @EnvName("BULK_MIGRATION_BATCH_SIZE")
+    @NotConflictingInApp
+    @JsonProperty
+    @ConfigDescription("If specified, the supertokens core will load the specified number of users for migrating in " +
+            "one single batch. (Default: 8000)")
+    private int bulk_migration_batch_size = 8000;
+
+    @EnvName("BULK_MIGRATION_SLEEP_BETWEEN_ROUNDS_IN_BATCH_MS")
+    @NotConflictingInApp
+    @JsonProperty
+    @ConfigDescription(
+            "If specified, the bulk migration will wait between rounds. To disable it, set it to null. (Default: 1000)")
+    private Integer bulk_migration_sleep_between_rounds_in_batch_ms = 1000;
+
+    @EnvName("WEBAUTHN_RECOVER_ACCOUNT_TOKEN_LIFETIME")
+    @NotConflictingInApp
+    @JsonProperty
+    @ConfigDescription("Time in milliseconds for how long a webauthn account recovery token is valid for. [Default: 3600000 (1 hour)]")
+    private long webauthn_recover_account_token_lifetime = 3600000; // in MS;
+
+    @EnvName("OTEL_COLLECTOR_CONNECTION_URI")
+    @ConfigYamlOnly
+    @JsonProperty
+    @ConfigDescription(
+            "The URL of the OpenTelemetry collector to which the core will send telemetry data. " +
+                    "This should be in the format http://<host>:<port> or https://<host>:<port>. (Default: " +
+                    "null)")
+    private String otel_collector_connection_uri = null;
+
+    @EnvName("DEADLOCK_LOGGER_ENABLE")
+    @ConfigYamlOnly
+    @JsonProperty
+    @ConfigDescription(
+            "Enables or disables the deadlock logger. (Default: false)")
+    private boolean deadlock_logger_enable = false;
+
+    @IgnoreForAnnotationCheck
+    private static boolean disableOAuthValidationForTest = false;
+
+    @TestOnly
+    public static void setDisableOAuthValidationForTest(boolean val) {
+        if (!Main.isTesting) {
+            throw new IllegalStateException("This method can only be called during testing");
+        }
+        disableOAuthValidationForTest = val;
+    }
 
     public static Set<String> getValidFields() {
         CoreConfig coreConfig = new CoreConfig();
@@ -223,12 +522,51 @@ public class CoreConfig {
         return validFields;
     }
 
+    public String getOAuthProviderPublicServiceUrl() throws InvalidConfigException {
+        if (oauth_provider_public_service_url == null) {
+            throw new InvalidConfigException("oauth_provider_public_service_url is not set");
+        }
+        return oauth_provider_public_service_url;
+    }
+
+    public String getOAuthProviderAdminServiceUrl() throws InvalidConfigException {
+        if (oauth_provider_admin_service_url == null) {
+            throw new InvalidConfigException("oauth_provider_public_service_url is not set");
+        }
+        return oauth_provider_admin_service_url;
+    }
+
+    public String getOauthProviderConsentLoginBaseUrl() throws InvalidConfigException {
+        if(oauth_provider_consent_login_base_url == null){
+            throw new InvalidConfigException("oauth_provider_consent_login_base_url is not set");
+        }
+        return oauth_provider_consent_login_base_url;
+    }
+
+    public String getOAuthProviderUrlConfiguredInOAuthProvider() throws InvalidConfigException {
+        if(oauth_provider_url_configured_in_oauth_provider == null) {
+            throw new InvalidConfigException("oauth_provider_url_configured_in_oauth_provider is not set");
+        }
+        return oauth_provider_url_configured_in_oauth_provider;
+    }
+
+    public String getOAuthClientSecretEncryptionKey() throws InvalidConfigException {
+        if(oauth_client_secret_encryption_key == null) {
+            throw new InvalidConfigException("oauth_client_secret_encryption_key is not set");
+        }
+        return oauth_client_secret_encryption_key;
+    }
+
     public String getIpAllowRegex() {
         return ip_allow_regex;
     }
 
     public String getIpDenyRegex() {
         return ip_deny_regex;
+    }
+
+    public String getLogLevel() {
+        return log_level;
     }
 
     public Set<LOG_LEVEL> getLogLevels(Main main) {
@@ -312,16 +650,36 @@ public class CoreConfig {
         return core_config_version;
     }
 
-    public long getAccessTokenValidity() {
-        return access_token_validity;
+    public long getAccessTokenValidityInMillis() {
+        return access_token_validity * 1000;
     }
 
     public boolean getAccessTokenBlacklisting() {
         return access_token_blacklisting;
     }
 
-    public long getRefreshTokenValidity() {
-        return (long) (refresh_token_validity);
+    public long getRefreshTokenValidityInMillis() {
+        return (long) (refresh_token_validity * 60 * 1000);
+    }
+
+    public int getRefreshTokenRotationGracePeriodInSeconds() {
+        return refresh_token_rotation_grace_period;
+    }
+
+    public long getRefreshTokenRotationGracePeriodInMillis() {
+        return refresh_token_rotation_grace_period * 1000L;
+    }
+
+    public double getAccessTokenValidityJitter() {
+        return access_token_validity_jitter;
+    }
+
+    public String getRecentTokenReuseBehaviour() {
+        return recent_token_reuse_behaviour;
+    }
+
+    public boolean getSchemaCheckStrictMode() {
+        return schema_check_strict_mode;
     }
 
     public long getPasswordResetTokenLifetime() {
@@ -367,8 +725,8 @@ public class CoreConfig {
         return access_token_signing_key_dynamic;
     }
 
-    public long getAccessTokenDynamicSigningKeyUpdateInterval() {
-        return (long) (access_token_dynamic_signing_key_update_interval);
+    public long getAccessTokenDynamicSigningKeyUpdateIntervalInMillis() {
+        return (long) (access_token_dynamic_signing_key_update_interval * 3600 * 1000);
     }
 
     public String[] getAPIKeys() {
@@ -398,10 +756,90 @@ public class CoreConfig {
         return webserver_https_enabled;
     }
 
+    public int getBulkMigrationParallelism() {
+        return bulk_migration_parallelism;
+    }
+
+    public long getWebauthnRecoverAccountTokenLifetime() {
+        return webauthn_recover_account_token_lifetime;
+    }
+
+    public int getBulkMigrationBatchSize() {
+        return bulk_migration_batch_size;
+    }
+
+    public Integer getBulkMigrationSleepBetweenRoundsInBatchMs() {
+        return bulk_migration_sleep_between_rounds_in_batch_ms;
+    }
+
+    public String getOtelCollectorConnectionURI() {
+        return otel_collector_connection_uri;
+    }
+
+    public boolean isDeadlockLoggerEnabled() {
+        return deadlock_logger_enable;
+    }
+  
+    public String getSAMLLegacyACSURL() {
+        return saml_legacy_acs_url;
+    }
+
+    public String getSAMLSPEntityID() {
+        return saml_sp_entity_id;
+    }
+
+    public long getSAMLClaimsValidity() {
+        return saml_claims_validity;
+    }
+
+    public long getSAMLRelayStateValidity() {
+        return saml_relay_state_validity;
+    }
+
     private String getConfigFileLocation(Main main) {
         return new File(CLIOptions.get(main).getConfigFilePath() == null
                 ? CLIOptions.get(main).getInstallationPath() + "config.yaml"
                 : CLIOptions.get(main).getConfigFilePath()).getAbsolutePath();
+    }
+
+    public static void updateConfigJsonFromEnv(JsonObject configJson) {
+        Map<String, String> env = System.getenv();
+
+        for (Field field : CoreConfig.class.getDeclaredFields()) {
+            if (field.isAnnotationPresent(EnvName.class)) {
+                String envName = field.getAnnotation(EnvName.class).value();
+                String stringValue = env.get(envName);
+
+                if (stringValue == null || stringValue.isEmpty()) {
+                    continue;
+                }
+
+                if (stringValue.startsWith("\"") && stringValue.endsWith("\"")) {
+                    stringValue = stringValue.substring(1, stringValue.length() - 1);
+                    stringValue = stringValue
+                        .replace("\\n", "\n")
+                        .replace("\\t", "\t")
+                        .replace("\\r", "\r")
+                        .replace("\\\"", "\"")
+                        .replace("\\'", "'")
+                        .replace("\\\\", "\\");
+                }
+
+                if (field.getType().equals(String.class)) {
+                    configJson.addProperty(field.getName(), stringValue);
+                } else if (field.getType().equals(int.class)) {
+                    configJson.addProperty(field.getName(), Integer.parseInt(stringValue));
+                } else if (field.getType().equals(long.class)) {
+                    configJson.addProperty(field.getName(), Long.parseLong(stringValue));
+                } else if (field.getType().equals(boolean.class)) {
+                    configJson.addProperty(field.getName(), Boolean.parseBoolean(stringValue));
+                } else if (field.getType().equals(float.class)) {
+                    configJson.addProperty(field.getName(), Float.parseFloat(stringValue));
+                } else if (field.getType().equals(double.class)) {
+                    configJson.addProperty(field.getName(), Double.parseDouble(stringValue));
+                }
+            }
+        }
     }
 
     void normalizeAndValidate(Main main, boolean includeConfigFilePath) throws InvalidConfigException {
@@ -419,7 +857,7 @@ public class CoreConfig {
             throw new InvalidConfigException(
                     "'access_token_validity' must be between 1 and 86400000 seconds inclusive." +
                             (includeConfigFilePath ? " The config file can be"
-                            + " found here: " + getConfigFileLocation(main) : ""));
+                                    + " found here: " + getConfigFileLocation(main) : ""));
         }
         Boolean validityTesting = CoreConfigTestContent.getInstance(main)
                 .getValue(CoreConfigTestContent.VALIDITY_TESTING);
@@ -441,6 +879,22 @@ public class CoreConfig {
                                 (includeConfigFilePath ? " The config file can be"
                                         + " found here: " + getConfigFileLocation(main) : ""));
             }
+        }
+
+        if (!Main.isTesting || validityTesting) { // testing may set windows outside the normal bounds
+            if (refresh_token_rotation_grace_period < 0 || refresh_token_rotation_grace_period > 300) {
+                throw new InvalidConfigException(
+                        "'refresh_token_rotation_grace_period' must be between 0 and 300 seconds inclusive." +
+                                (includeConfigFilePath ? " The config file can be"
+                                        + " found here: " + getConfigFileLocation(main) : ""));
+            }
+        }
+
+        if (access_token_validity_jitter < 0 || access_token_validity_jitter > 0.25) {
+            throw new InvalidConfigException(
+                    "'access_token_validity_jitter' must be between 0 and 0.25 inclusive." +
+                            (includeConfigFilePath ? " The config file can be"
+                                    + " found here: " + getConfigFileLocation(main) : ""));
         }
 
         if (password_reset_token_lifetime <= 0) {
@@ -566,7 +1020,8 @@ public class CoreConfig {
                 try {
                     filter.setAllow(ip_allow_regex);
                 } catch (PatternSyntaxException e) {
-                    throw new InvalidConfigException("Provided regular expression is invalid for ip_allow_regex config");
+                    throw new InvalidConfigException(
+                            "Provided regular expression is invalid for ip_allow_regex config");
                 }
             }
             if (ip_deny_regex != null) {
@@ -590,7 +1045,62 @@ public class CoreConfig {
             }
         }
 
+        if (supertokens_min_cdi_version != null) {
+            SemVer minVersion;
+            try {
+                minVersion = new SemVer(supertokens_min_cdi_version);
+            } catch (IllegalArgumentException e) {
+                throw new InvalidConfigException("supertokens_min_cdi_version is not a valid semantic version");
+            }
+            if (!WebserverAPI.supportedVersions.contains(minVersion)) {
+                throw new InvalidConfigException("supertokens_min_cdi_version is not a supported version");
+            }
+            if (supertokens_max_cdi_version != null
+                    && minVersion.greaterThan(new SemVer(supertokens_max_cdi_version))) {
+                throw new InvalidConfigException(
+                        "supertokens_min_cdi_version cannot be greater than supertokens_max_cdi_version");
+            }
+        }
+
+        if (bulk_migration_parallelism < 1) {
+            throw new InvalidConfigException("Provided bulk_migration_parallelism must be >= 1");
+        }
+
+        if (bulk_migration_batch_size < 1) {
+            throw new InvalidConfigException("Provided bulk_migration_batch_size must be >= 1");
+        }
+
+        if (webauthn_recover_account_token_lifetime <= 0) {
+            throw new InvalidConfigException("Provided webauthn_recover_account_token_lifetime must be > 0");
+        }
+
+        for (String fieldId : CoreConfig.getValidFields()) {
+            try {
+                Field field = CoreConfig.class.getDeclaredField(fieldId);
+                if (field.isAnnotationPresent(EnumProperty.class)) {
+                    String[] allowedValues = field.getAnnotation(EnumProperty.class).value();
+                    try {
+                        String value = field.get(this) != null ? field.get(this).toString() : null;
+                        if (!Arrays.asList(Arrays.stream(allowedValues).map(str -> str.toLowerCase()).toArray())
+                                .contains(value.toLowerCase())) {
+                            throw new InvalidConfigException(
+                                    fieldId + " property is not set correctly. It must be one of "
+                                            + Arrays.toString(allowedValues));
+                        }
+                    } catch (IllegalAccessException e) {
+                        throw new InvalidConfigException("Could not access field " + fieldId);
+                    }
+                }
+            } catch (NoSuchFieldException e) {
+                continue;
+            }
+        }
+
         // Normalize
+        if (saml_sp_entity_id == null) {
+            saml_sp_entity_id = "https://saml.supertokens.com";
+        }
+
         if (ip_allow_regex != null) {
             ip_allow_regex = ip_allow_regex.trim();
             if (ip_allow_regex.equals("")) {
@@ -606,6 +1116,10 @@ public class CoreConfig {
 
         if (log_level != null) {
             log_level = log_level.trim().toUpperCase();
+        }
+
+        if (recent_token_reuse_behaviour != null) {
+            recent_token_reuse_behaviour = recent_token_reuse_behaviour.trim().toUpperCase();
         }
 
         { // info_log_path
@@ -679,16 +1193,73 @@ public class CoreConfig {
 
         if (supertokens_saas_load_only_cud != null) {
             try {
-                supertokens_saas_load_only_cud =
-                        Utils.normalizeAndValidateConnectionUriDomain(supertokens_saas_load_only_cud, true);
+                supertokens_saas_load_only_cud = Utils
+                        .normalizeAndValidateConnectionUriDomain(supertokens_saas_load_only_cud, true);
             } catch (ServletException e) {
                 throw new InvalidConfigException("supertokens_saas_load_only_cud is invalid");
             }
         }
 
-        access_token_validity = access_token_validity * 1000;
-        access_token_dynamic_signing_key_update_interval = access_token_dynamic_signing_key_update_interval * 3600 * 1000;
-        refresh_token_validity = refresh_token_validity * 60 * 1000;
+        if(oauth_provider_public_service_url != null) {
+            try {
+                URL url = new URL(oauth_provider_public_service_url);
+            } catch (MalformedURLException malformedURLException){
+                throw new InvalidConfigException("oauth_provider_public_service_url is not a valid URL");
+            }
+        }
+
+        if(oauth_provider_admin_service_url != null) {
+            try {
+                URL url = new URL(oauth_provider_admin_service_url);
+            } catch (MalformedURLException malformedURLException){
+                throw new InvalidConfigException("oauth_provider_admin_service_url is not a valid URL");
+            }
+        }
+
+        if(oauth_provider_consent_login_base_url != null) {
+            try {
+                URL url = new URL(oauth_provider_consent_login_base_url);
+            } catch (MalformedURLException malformedURLException){
+                throw new InvalidConfigException("oauth_provider_consent_login_base_url is not a valid URL");
+            }
+        }
+
+
+        if(oauth_provider_url_configured_in_oauth_provider == null) {
+            oauth_provider_url_configured_in_oauth_provider = oauth_provider_public_service_url;
+        } else {
+            try {
+                URL url = new URL(oauth_provider_url_configured_in_oauth_provider);
+            } catch (MalformedURLException malformedURLException){
+                throw new InvalidConfigException("oauth_provider_url_configured_in_oauth_provider is not a valid URL");
+            }
+        }
+
+        if (!disableOAuthValidationForTest) {
+            List<String> configsTogetherSet = Arrays.asList(oauth_provider_public_service_url, oauth_provider_admin_service_url, oauth_provider_consent_login_base_url);
+            if(isAnySet(configsTogetherSet) && !isAllSet(configsTogetherSet)) {
+                throw new InvalidConfigException("If any of the following is set, all of them has to be set: oauth_provider_public_service_url, oauth_provider_admin_service_url, oauth_provider_consent_login_base_url");
+            }
+        }
+
+        if (Main.isTesting) {
+            String oauthHost = System.getProperty("ST_OAUTH_PROVIDER_SERVICE_HOST", "localhost");
+            if (oauth_provider_public_service_url == null) {
+                oauth_provider_public_service_url = "http://" + oauthHost + ":" + System.getProperty("ST_OAUTH_PROVIDER_SERVICE_PORT");
+            }
+            if (oauth_provider_admin_service_url == null) {
+                oauth_provider_admin_service_url = "http://" + oauthHost + ":" + System.getProperty("ST_OAUTH_PROVIDER_ADMIN_PORT");
+            }
+            if (oauth_provider_url_configured_in_oauth_provider == null) {
+                oauth_provider_url_configured_in_oauth_provider = "http://" + oauthHost + ":4444";
+            }
+            if (oauth_client_secret_encryption_key == null) {
+                oauth_client_secret_encryption_key = "clientsecretencryptionkey";
+            }
+            if (oauth_provider_consent_login_base_url == null) {
+                oauth_provider_consent_login_base_url = "http://localhost:3001/auth";
+            }
+        }
 
         isNormalizedAndValid = true;
     }
@@ -718,14 +1289,88 @@ public class CoreConfig {
     }
 
     static void assertThatCertainConfigIsNotSetForAppOrTenants(JsonObject config) throws InvalidConfigException {
-        // these are all configs that are per core. So we do not allow the developer to set these dynamically.
+        // these are all configs that are per core. So we do not allow the developer to
+        // set these dynamically.
         for (Field field : CoreConfig.class.getDeclaredFields()) {
             if (field.isAnnotationPresent(ConfigYamlOnly.class)) {
                 if (config.has(field.getName())) {
-                    throw new InvalidConfigException(field.getName() + " can only be set via the core's base config setting");
+                    throw new InvalidConfigException(
+                            field.getName() + " can only be set via the core's base config setting");
                 }
             }
         }
+    }
+
+    public static ArrayList<ConfigFieldInfo> getConfigFieldsInfoForDashboard(Main main,
+                                                                             TenantIdentifier tenantIdentifier)
+            throws IOException, TenantOrAppNotFoundException {
+        JsonObject tenantConfig = new Gson().toJsonTree(Config.getConfig(tenantIdentifier, main)).getAsJsonObject();
+
+        JsonObject defaultConfig = new Gson().toJsonTree(new CoreConfig()).getAsJsonObject();
+
+        ArrayList<ConfigFieldInfo> result = new ArrayList<ConfigFieldInfo>();
+
+        for (String fieldId : CoreConfig.getValidFields()) {
+            try {
+                Field field = CoreConfig.class.getDeclaredField(fieldId);
+                // If fieldId is not annotated with JsonProperty
+                // or is annotated with ConfigYamlOnly, then skip
+                if (!field.isAnnotationPresent(JsonProperty.class)
+                        || field.isAnnotationPresent(ConfigYamlOnly.class)
+                        || field.isAnnotationPresent(HideFromDashboard.class)
+                        || fieldId.equals("core_config_version")) {
+                    continue;
+                }
+
+                String key = field.getName();
+                String description = field.isAnnotationPresent(ConfigDescription.class)
+                        ? field.getAnnotation(ConfigDescription.class).value()
+                        : "";
+
+                if (description.contains("Deprecated")) {
+                    continue;
+                }
+
+                boolean isDifferentAcrossTenants = !field.isAnnotationPresent(NotConflictingInApp.class);
+
+                String valueType = null;
+
+                Class<?> fieldType = field.getType();
+
+                if (fieldType == String.class) {
+                    valueType = "string";
+                } else if (fieldType == boolean.class || fieldType == Boolean.class) {
+                    valueType = "boolean";
+                } else if (fieldType == int.class || fieldType == Integer.class
+                        || fieldType == long.class || fieldType == Long.class
+                        || fieldType == double.class || fieldType == Double.class) {
+                    valueType = "number";
+                } else {
+                    throw new RuntimeException("Unknown field type " + fieldType.getName());
+                }
+
+                String[] possibleValues = null;
+
+                if (field.isAnnotationPresent(EnumProperty.class)) {
+                    valueType = "enum";
+                    possibleValues = field.getAnnotation(EnumProperty.class).value();
+                }
+
+                JsonElement value = tenantConfig.get(field.getName());
+
+                JsonElement defaultValue = defaultConfig.get(field.getName());
+                boolean isNullable = defaultValue == null;
+
+                result.add(new ConfigFieldInfo(
+                        key, valueType, value, description, isDifferentAcrossTenants,
+                        possibleValues, isNullable, defaultValue, false, false));
+
+            } catch (NoSuchFieldException e) {
+                continue;
+            }
+        }
+
+        return result;
     }
 
     void assertThatConfigFromSameAppIdAreNotConflicting(CoreConfig other) throws InvalidConfigException {
@@ -747,5 +1392,29 @@ public class CoreConfig {
 
     public String getMaxCDIVersion() {
         return this.supertokens_max_cdi_version;
+    }
+
+    public String getMinCDIVersion() {
+        return this.supertokens_min_cdi_version;
+    }
+
+    private boolean isAnySet(List<String> configs){
+        for (String config : configs){
+            if(config!=null){
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isAllSet(List<String> configs) {
+        boolean foundNotSet = false;
+        for(String config: configs){
+            if(config == null){
+                foundNotSet = true;
+                break;
+            }
+        }
+        return !foundNotSet;
     }
 }

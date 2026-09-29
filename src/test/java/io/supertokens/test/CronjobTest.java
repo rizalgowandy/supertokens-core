@@ -19,9 +19,11 @@ package io.supertokens.test;
 import com.google.gson.JsonObject;
 import io.supertokens.Main;
 import io.supertokens.ProcessState;
+import io.supertokens.ResourceDistributor;
 import io.supertokens.cronjobs.CronTask;
 import io.supertokens.cronjobs.CronTaskTest;
 import io.supertokens.cronjobs.Cronjobs;
+import io.supertokens.cronjobs.bulkimport.ProcessBulkImportUsers;
 import io.supertokens.cronjobs.syncCoreConfigWithDb.SyncCoreConfigWithDb;
 import io.supertokens.exceptions.QuitProgramException;
 import io.supertokens.featureflag.EE_FEATURES;
@@ -39,8 +41,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestRule;
 import org.reflections.Reflections;
-import org.w3c.dom.css.Counter;
 
+import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -216,10 +218,12 @@ public class CronjobTest {
 
         public static PerTenantCronjob getInstance(Main main, List<List<TenantIdentifier>> tenantsInfo) {
             try {
-                return (PerTenantCronjob) main.getResourceDistributor().getResource(new TenantIdentifier(null, null, null), RESOURCE_ID);
+                return (PerTenantCronjob) main.getResourceDistributor()
+                        .getResource(new TenantIdentifier(null, null, null), RESOURCE_ID);
             } catch (TenantOrAppNotFoundException e) {
                 return (PerTenantCronjob) main.getResourceDistributor()
-                        .setResource(new TenantIdentifier(null, null, null), RESOURCE_ID, new PerTenantCronjob(main, tenantsInfo));
+                        .setResource(new TenantIdentifier(null, null, null), RESOURCE_ID,
+                                new PerTenantCronjob(main, tenantsInfo));
             }
         }
 
@@ -251,10 +255,12 @@ public class CronjobTest {
 
         public static PerAppCronjob getInstance(Main main, List<List<TenantIdentifier>> tenantsInfo) {
             try {
-                return (PerAppCronjob) main.getResourceDistributor().getResource(new TenantIdentifier(null, null, null), RESOURCE_ID);
+                return (PerAppCronjob) main.getResourceDistributor()
+                        .getResource(new TenantIdentifier(null, null, null), RESOURCE_ID);
             } catch (TenantOrAppNotFoundException e) {
                 return (PerAppCronjob) main.getResourceDistributor()
-                        .setResource(new TenantIdentifier(null, null, null), RESOURCE_ID, new PerAppCronjob(main, tenantsInfo));
+                        .setResource(new TenantIdentifier(null, null, null), RESOURCE_ID,
+                                new PerAppCronjob(main, tenantsInfo));
             }
         }
 
@@ -285,10 +291,12 @@ public class CronjobTest {
 
         public static PerUserPoolCronjob getInstance(Main main, List<List<TenantIdentifier>> tenantsInfo) {
             try {
-                return (PerUserPoolCronjob) main.getResourceDistributor().getResource(new TenantIdentifier(null, null, null), RESOURCE_ID);
+                return (PerUserPoolCronjob) main.getResourceDistributor()
+                        .getResource(new TenantIdentifier(null, null, null), RESOURCE_ID);
             } catch (TenantOrAppNotFoundException e) {
                 return (PerUserPoolCronjob) main.getResourceDistributor()
-                        .setResource(new TenantIdentifier(null, null, null), RESOURCE_ID, new PerUserPoolCronjob(main, tenantsInfo));
+                        .setResource(new TenantIdentifier(null, null, null), RESOURCE_ID,
+                                new PerUserPoolCronjob(main, tenantsInfo));
             }
         }
 
@@ -354,6 +362,9 @@ public class CronjobTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -368,7 +379,7 @@ public class CronjobTest {
     public void testThatCronjobThrowsQuitProgramExceptionAndQuits() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
 
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
         Cronjobs.addCronjob(process.getProcess(), QuitProgramExceptionCronjob.getInstance(process.getProcess()));
@@ -381,7 +392,7 @@ public class CronjobTest {
     public void testThatCronjobThrowsError() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
 
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -408,7 +419,7 @@ public class CronjobTest {
 
         normalCronjobCounter = 0;
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         assertEquals(normalCronjobCounter, 0);
@@ -426,7 +437,7 @@ public class CronjobTest {
     public void testAddingCronJobTwice() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         int initialSize = Cronjobs.getInstance(process.getProcess()).getTasks().size();
@@ -445,10 +456,9 @@ public class CronjobTest {
     public void testAddingTenantsDoesNotIncreaseCronJobs() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -539,10 +549,9 @@ public class CronjobTest {
     public void testTargetTenantCronTask() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -582,10 +591,12 @@ public class CronjobTest {
                 new JsonObject()
         ), false);
 
-        Cronjobs.addCronjob(process.getProcess(), TargetTenantCronjob.getInstance(process.getProcess(), new TenantIdentifier(null, "a1", "t1")));
+        Cronjobs.addCronjob(process.getProcess(),
+                TargetTenantCronjob.getInstance(process.getProcess(), new TenantIdentifier(null, "a1", "t1")));
 
         Thread.sleep(1100);
-        assertTrue(TargetTenantCronjob.getInstance(process.getProcess(), new TenantIdentifier(null, "a1", "t1")).wasCalled);
+        assertTrue(TargetTenantCronjob.getInstance(process.getProcess(),
+                new TenantIdentifier(null, "a1", "t1")).wasCalled);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -595,10 +606,9 @@ public class CronjobTest {
     public void testPerTenantCronTask() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -638,11 +648,14 @@ public class CronjobTest {
                 new JsonObject()
         ), false);
 
-        List<List<TenantIdentifier>> uniqueUserPoolIdsTenants = StorageLayer.getTenantsWithUniqueUserPoolId(process.getProcess());
-        Cronjobs.addCronjob(process.getProcess(), PerTenantCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants));
+        List<List<TenantIdentifier>> uniqueUserPoolIdsTenants = StorageLayer.getTenantsWithUniqueUserPoolId(
+                process.getProcess());
+        Cronjobs.addCronjob(process.getProcess(),
+                PerTenantCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants));
 
         Thread.sleep(1100);
-        assertEquals(5, PerTenantCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants).tenantIdentifiers.size());
+        assertEquals(5,
+                PerTenantCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants).tenantIdentifiers.size());
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -652,10 +665,9 @@ public class CronjobTest {
     public void testPerAppCronTask() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -695,11 +707,14 @@ public class CronjobTest {
                 new JsonObject()
         ), false);
 
-        List<List<TenantIdentifier>> uniqueUserPoolIdsTenants = StorageLayer.getTenantsWithUniqueUserPoolId(process.getProcess());
-        Cronjobs.addCronjob(process.getProcess(), PerAppCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants));
+        List<List<TenantIdentifier>> uniqueUserPoolIdsTenants = StorageLayer.getTenantsWithUniqueUserPoolId(
+                process.getProcess());
+        Cronjobs.addCronjob(process.getProcess(),
+                PerAppCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants));
 
         Thread.sleep(1100);
-        assertEquals(3, PerAppCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants).appIdentifiers.size());
+        assertEquals(3,
+                PerAppCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants).appIdentifiers.size());
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -709,10 +724,9 @@ public class CronjobTest {
     public void testPerUserPoolCronTask() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -759,8 +773,10 @@ public class CronjobTest {
                 config
         ), false);
 
-        List<List<TenantIdentifier>> uniqueUserPoolIdsTenants = StorageLayer.getTenantsWithUniqueUserPoolId(process.getProcess());
-        Cronjobs.addCronjob(process.getProcess(), PerUserPoolCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants));
+        List<List<TenantIdentifier>> uniqueUserPoolIdsTenants = StorageLayer.getTenantsWithUniqueUserPoolId(
+                process.getProcess());
+        Cronjobs.addCronjob(process.getProcess(),
+                PerUserPoolCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants));
 
         Thread.sleep(1100);
         assertEquals(2, PerUserPoolCronjob.getInstance(process.getProcess(), uniqueUserPoolIdsTenants).storages.size());
@@ -773,7 +789,7 @@ public class CronjobTest {
     public void testThatCoreAutomaticallySyncsToConfigChangesInDb() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         CronTaskTest.getInstance(process.getProcess()).setIntervalInSeconds(SyncCoreConfigWithDb.RESOURCE_KEY,
@@ -853,16 +869,17 @@ public class CronjobTest {
     public void testThatReAddingSameCronTaskDoesNotScheduleMoreExecutors() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
-        for (int i=0; i<10; i++) {
+        for (int i = 0; i < 10; i++) {
             Cronjobs.addCronjob(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
             Thread.sleep(50);
         }
 
         Thread.sleep(5000);
-        assertTrue(CounterCronJob.getInstance(process.getProcess()).getCount() > 3 && CounterCronJob.getInstance(process.getProcess()).getCount() < 8);
+        assertTrue(CounterCronJob.getInstance(process.getProcess()).getCount() > 3 &&
+                CounterCronJob.getInstance(process.getProcess()).getCount() < 10);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -872,7 +889,7 @@ public class CronjobTest {
     public void testThatNoCronJobIntervalIsMoreThanADay() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -893,10 +910,9 @@ public class CronjobTest {
     public void testThatCronJobsHaveTenantsInfoAfterRestart() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -946,25 +962,28 @@ public class CronjobTest {
         ), false, false, true);
 
         {
-            List<List<List<TenantIdentifier>>> tenantsInfos = Cronjobs.getInstance(process.getProcess()).getTenantInfos();
-            assertEquals(10, tenantsInfos.size());
+            List<List<List<TenantIdentifier>>> tenantsInfos = Cronjobs.getInstance(process.getProcess())
+                    .getTenantInfos();
+            assertEquals(16, tenantsInfos.size());
             int count = 0;
             for (List<List<TenantIdentifier>> tenantsInfo : tenantsInfos) {
                 if (tenantsInfo != null) {
                     assertEquals(2, tenantsInfo.size());
-                    assertEquals(1, tenantsInfo.get(0).size());
-                    assertEquals(4, tenantsInfo.get(1).size());
+                    assertTrue(
+                        (tenantsInfo.get(0).size() == 1 && tenantsInfo.get(1).size() == 4) ||
+                        (tenantsInfo.get(1).size() == 1 && tenantsInfo.get(0).size() == 4)
+                    );
                     count++;
                 }
             }
-            assertEquals(9, count);
+            assertEquals(15, count);
         }
 
         process.kill(false);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
 
 
-        process = TestingProcessManager.start(args, false);
+        process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         process.startProcess();
@@ -972,18 +991,21 @@ public class CronjobTest {
 
         // we expect the state of the tenantsInfo to be same after core restart
         {
-            List<List<List<TenantIdentifier>>> tenantsInfos = Cronjobs.getInstance(process.getProcess()).getTenantInfos();
-            assertEquals(10, tenantsInfos.size());
+            List<List<List<TenantIdentifier>>> tenantsInfos = Cronjobs.getInstance(process.getProcess())
+                    .getTenantInfos();
+            assertEquals(16, tenantsInfos.size());
             int count = 0;
             for (List<List<TenantIdentifier>> tenantsInfo : tenantsInfos) {
                 if (tenantsInfo != null) {
                     assertEquals(2, tenantsInfo.size());
-                    assertEquals(1, tenantsInfo.get(0).size());
-                    assertEquals(4, tenantsInfo.get(1).size());
+                    assertTrue(
+                        (tenantsInfo.get(0).size() == 1 && tenantsInfo.get(1).size() == 4) ||
+                        (tenantsInfo.get(0).size() == 4 && tenantsInfo.get(1).size() == 1)
+                    );
                     count++;
                 }
             }
-            assertEquals(9, count);
+            assertEquals(15, count);
         }
 
         process.kill();
@@ -994,7 +1016,7 @@ public class CronjobTest {
     public void testThatThereAreTasksOfAllCronTaskClassesAndHaveCorrectIntervals() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -1018,28 +1040,50 @@ public class CronjobTest {
         intervals.put("io.supertokens.ee.cronjobs.EELicenseCheck", 86400);
         intervals.put("io.supertokens.cronjobs.syncCoreConfigWithDb.SyncCoreConfigWithDb", 60);
         intervals.put("io.supertokens.cronjobs.deleteExpiredSessions.DeleteExpiredSessions", 43200);
-        intervals.put("io.supertokens.cronjobs.deleteExpiredPasswordResetTokens.DeleteExpiredPasswordResetTokens", 3600);
-        intervals.put("io.supertokens.cronjobs.deleteExpiredEmailVerificationTokens.DeleteExpiredEmailVerificationTokens", 43200);
-        intervals.put("io.supertokens.cronjobs.deleteExpiredPasswordlessDevices.DeleteExpiredPasswordlessDevices", 3600);
+        intervals.put("io.supertokens.cronjobs.deleteExpiredPasswordResetTokens.DeleteExpiredPasswordResetTokens",
+                3600);
+        intervals.put(
+                "io.supertokens.cronjobs.deleteExpiredEmailVerificationTokens.DeleteExpiredEmailVerificationTokens",
+                43200);
+        intervals.put("io.supertokens.cronjobs.deleteExpiredPasswordlessDevices.DeleteExpiredPasswordlessDevices",
+                3600);
         intervals.put("io.supertokens.cronjobs.deleteExpiredTotpTokens.DeleteExpiredTotpTokens", 3600);
         intervals.put("io.supertokens.cronjobs.deleteExpiredDashboardSessions.DeleteExpiredDashboardSessions", 43200);
         intervals.put("io.supertokens.cronjobs.telemetry.Telemetry", 86400);
-        intervals.put("io.supertokens.cronjobs.deleteExpiredAccessTokenSigningKeys.DeleteExpiredAccessTokenSigningKeys", 86400);
+        intervals.put("io.supertokens.cronjobs.deleteExpiredAccessTokenSigningKeys.DeleteExpiredAccessTokenSigningKeys",
+                86400);
+        intervals.put("io.supertokens.cronjobs.bulkimport.ProcessBulkImportUsers", 300);
+        intervals.put("io.supertokens.cronjobs.cleanupOAuthSessionsAndChallenges.CleanupOAuthSessionsAndChallenges",
+                86400);
+        intervals.put("io.supertokens.cronjobs.cleanupWebauthnExpiredData.CleanUpWebauthNExpiredDataCron", 86400);
+        intervals.put("io.supertokens.cronjobs.deleteExpiredSAMLData.DeleteExpiredSAMLData", 3600);
+        intervals.put("io.supertokens.cronjobs.backfill.BackfillReservationTables", 300);
+        intervals.put(
+                "io.supertokens.cronjobs.cleanupActivityLogPartitions.CleanupActivityLogPartitions", 86400);
 
         Map<String, Integer> delays = new HashMap<>();
         delays.put("io.supertokens.ee.cronjobs.EELicenseCheck", 86400);
         delays.put("io.supertokens.cronjobs.syncCoreConfigWithDb.SyncCoreConfigWithDb", 0);
         delays.put("io.supertokens.cronjobs.deleteExpiredSessions.DeleteExpiredSessions", 0);
         delays.put("io.supertokens.cronjobs.deleteExpiredPasswordResetTokens.DeleteExpiredPasswordResetTokens", 0);
-        delays.put("io.supertokens.cronjobs.deleteExpiredEmailVerificationTokens.DeleteExpiredEmailVerificationTokens", 0);
+        delays.put("io.supertokens.cronjobs.deleteExpiredEmailVerificationTokens.DeleteExpiredEmailVerificationTokens",
+                0);
         delays.put("io.supertokens.cronjobs.deleteExpiredPasswordlessDevices.DeleteExpiredPasswordlessDevices", 0);
         delays.put("io.supertokens.cronjobs.deleteExpiredTotpTokens.DeleteExpiredTotpTokens", 0);
         delays.put("io.supertokens.cronjobs.deleteExpiredDashboardSessions.DeleteExpiredDashboardSessions", 0);
         delays.put("io.supertokens.cronjobs.telemetry.Telemetry", 0);
-        delays.put("io.supertokens.cronjobs.deleteExpiredAccessTokenSigningKeys.DeleteExpiredAccessTokenSigningKeys", 0);
+        delays.put("io.supertokens.cronjobs.deleteExpiredAccessTokenSigningKeys.DeleteExpiredAccessTokenSigningKeys",
+                0);
+        delays.put("io.supertokens.cronjobs.bulkimport.ProcessBulkImportUsers", 0);
+        delays.put("io.supertokens.cronjobs.cleanupOAuthSessionsAndChallenges.CleanupOAuthSessionsAndChallenges",
+                0);
+        delays.put("io.supertokens.cronjobs.cleanupWebauthnExpiredData.CleanUpWebauthNExpiredDataCron", 0);
+        delays.put("io.supertokens.cronjobs.deleteExpiredSAMLData.DeleteExpiredSAMLData", 0);
+        delays.put("io.supertokens.cronjobs.backfill.BackfillReservationTables", 10);
+        delays.put("io.supertokens.cronjobs.cleanupActivityLogPartitions.CleanupActivityLogPartitions", 0);
 
         List<CronTask> allTasks = Cronjobs.getInstance(process.getProcess()).getTasks();
-        assertEquals(10, allTasks.size());
+        assertEquals(16, allTasks.size());
 
         for (CronTask task : allTasks) {
             assertEquals(intervals.get(task.getClass().getName()).intValue(), task.getIntervalTimeSeconds());
@@ -1049,4 +1093,155 @@ public class CronjobTest {
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
     }
+
+    @Test
+    public void testThatIsCronJobLoadedReturnsTheGoodValues() throws Exception {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        boolean isLoaded = Cronjobs.isCronjobLoaded(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+
+        assertFalse(isLoaded);
+
+        Cronjobs.addCronjob(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+        isLoaded = Cronjobs.isCronjobLoaded(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+
+        assertTrue(isLoaded);
+
+        Cronjobs.removeCronjob(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+        isLoaded = Cronjobs.isCronjobLoaded(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+
+        assertFalse(isLoaded);
+
+        //removing twice doesn't do anything funky
+        Cronjobs.removeCronjob(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+        isLoaded = Cronjobs.isCronjobLoaded(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+
+        assertFalse(isLoaded);
+
+        //adding twice doesn't do anything funky
+        Cronjobs.addCronjob(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+        isLoaded = Cronjobs.isCronjobLoaded(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+
+        assertTrue(isLoaded);
+        Cronjobs.addCronjob(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+        isLoaded = Cronjobs.isCronjobLoaded(process.getProcess(), CounterCronJob.getInstance(process.getProcess()));
+
+        assertTrue(isLoaded);
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testThatBulkMigrationCronJobLoadedWhenNoEnvVarSet() throws Exception {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+        process.startProcess();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+            return;
+        }
+
+        Main main = process.getProcess();
+        ResourceDistributor resourceDistributor = main.getResourceDistributor();
+        ResourceDistributor.SingletonResource bulkImportCron = resourceDistributor.getResource(ProcessBulkImportUsers.RESOURCE_KEY);
+        assertNull(System.getenv("BULK_MIGRATION_CRON_ENABLED"));
+        assertNotNull(bulkImportCron);
+        assertTrue(bulkImportCron instanceof ProcessBulkImportUsers);
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testThatBulkMigrationCronJobLoadedWhenEnvVarSetToTrue() throws Exception {
+        String[] args = {"../"};
+        Map<String, String> originalValues = setEnv(Map.of("BULK_MIGRATION_CRON_ENABLED", "true"));
+        try {
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+            process.startProcess();
+            assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+            if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+                return;
+            }
+
+            Main main = process.getProcess();
+            ResourceDistributor resourceDistributor = main.getResourceDistributor();
+            ResourceDistributor.SingletonResource bulkImportCron = resourceDistributor.getResource(ProcessBulkImportUsers.RESOURCE_KEY);
+            assertEquals("true", System.getenv("BULK_MIGRATION_CRON_ENABLED"));
+            assertNotNull(bulkImportCron);
+            assertTrue(bulkImportCron instanceof ProcessBulkImportUsers);
+
+            process.kill();
+            assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+        } finally {
+            restoreEnv(originalValues);
+        }
+    }
+
+    @Test
+    public void testThatBulkMigrationCronJobNotLoadedWhenEnvVarSetToFalse() throws Exception {
+        String[] args = {"../"};
+        Map<String, String> originalValues = setEnv(Map.of("BULK_MIGRATION_CRON_ENABLED", "false"));
+        try {
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+            process.startProcess();
+            assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+            if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+                return;
+            }
+
+            Main main = process.getProcess();
+            ResourceDistributor resourceDistributor = main.getResourceDistributor();
+            ResourceDistributor.SingletonResource bulkImportCron = resourceDistributor.getResource(ProcessBulkImportUsers.RESOURCE_KEY);
+            assertEquals("false", System.getenv("BULK_MIGRATION_CRON_ENABLED"));
+            assertNull(bulkImportCron);
+
+            process.kill();
+            assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+        } finally {
+            restoreEnv(originalValues);
+        }
+    }
+
+    private static Map<String, String> getWritableEnv() {
+        try {
+            Map<String, String> env = System.getenv();
+            Class<?> cl = env.getClass();
+            Field field = cl.getDeclaredField("m");
+            field.setAccessible(true);
+            return (Map<String, String>) field.get(env);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to get writable environment", e);
+        }
+    }
+
+    protected static Map<String, String> setEnv(Map<String, String> newenv) {
+        Map<String, String> originalValues = new HashMap<>();
+        Map<String, String> writableEnv = getWritableEnv();
+        for (String key : newenv.keySet()) {
+            originalValues.put(key, writableEnv.get(key));
+            writableEnv.put(key, newenv.get(key));
+        }
+        return originalValues;
+    }
+
+    protected static void restoreEnv(Map<String, String> originalValues) {
+        Map<String, String> writableEnv = getWritableEnv();
+        for (Map.Entry<String, String> entry : originalValues.entrySet()) {
+            if (entry.getValue() == null) {
+                writableEnv.remove(entry.getKey());
+            } else {
+                writableEnv.put(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
 }

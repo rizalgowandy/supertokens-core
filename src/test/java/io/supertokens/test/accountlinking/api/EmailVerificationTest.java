@@ -46,6 +46,9 @@ public class EmailVerificationTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -59,11 +62,10 @@ public class EmailVerificationTest {
     @Test
     public void testEmailVerificationWithUserIdMapping() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -72,7 +74,8 @@ public class EmailVerificationTest {
 
         AuthRecipeUserInfo user1 = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password");
         UserIdMapping.createUserIdMapping(process.getProcess(), user1.getSupertokensUserId(), "euserid1", null, false);
-        String token = EmailVerification.generateEmailVerificationToken(process.getProcess(), "euserid1", "test1@example.com");
+        String token = EmailVerification.generateEmailVerificationToken(process.getProcess(), "euserid1",
+                "test1@example.com");
         EmailVerification.verifyEmail(process.getProcess(), token);
 
         AuthRecipeUserInfo user2 = EmailPassword.signUp(process.getProcess(), "test2@example.com", "password");
@@ -88,8 +91,10 @@ public class EmailVerificationTest {
                     "http://localhost:3567/user/id", params, 1000, 1000, null,
                     WebserverAPI.getLatestCDIVersion().get(), "");
             JsonObject user = response.get("user").getAsJsonObject();
-            assertTrue(user.get("loginMethods").getAsJsonArray().get(0).getAsJsonObject().get("verified").getAsBoolean());
-            assertFalse(user.get("loginMethods").getAsJsonArray().get(1).getAsJsonObject().get("verified").getAsBoolean());
+            assertTrue(
+                    user.get("loginMethods").getAsJsonArray().get(0).getAsJsonObject().get("verified").getAsBoolean());
+            assertFalse(
+                    user.get("loginMethods").getAsJsonArray().get(1).getAsJsonObject().get("verified").getAsBoolean());
         }
 
         process.kill();

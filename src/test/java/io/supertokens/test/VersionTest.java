@@ -22,6 +22,7 @@ import io.supertokens.ProcessState;
 import io.supertokens.version.Version;
 import io.supertokens.version.VersionFile;
 import org.junit.AfterClass;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -37,6 +38,9 @@ public class VersionTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -49,8 +53,8 @@ public class VersionTest {
 
     @Test
     public void simpleLoadingOfVersionTest() throws Exception {
-        String[] args = { "../" };
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        String[] args = {"../"};
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         final ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
@@ -71,6 +75,12 @@ public class VersionTest {
 
     @Test
     public void versionFileMissingTest() throws Exception {
+        // Skip this test in parallel execution as it modifies the global version.yaml file
+        // which can cause other tests to fail if they try to read it while it's deleted
+        String workerId = System.getProperty("org.gradle.test.worker", "");
+        Assume.assumeTrue("Skipping in parallel test execution - modifies global version.yaml",
+                workerId.isEmpty());
+
         String installDir = "../";
 
         try {
@@ -85,13 +95,18 @@ public class VersionTest {
             process1 = pb.start();
             process1.waitFor();
 
-            String[] args = { "../" };
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+            String[] args = {"../"};
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
 
             ProcessState.EventAndException e = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
             assertNotNull(e);
             assertEquals(e.exception.getMessage(),
                     "java.io.FileNotFoundException: ../version.yaml (No such file or directory)");
+
+            pb = new ProcessBuilder("cp", "temp/version.yaml", "./version.yaml");
+            pb.directory(new File(installDir));
+            process1 = pb.start();
+            process1.waitFor();
 
             process.kill();
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));

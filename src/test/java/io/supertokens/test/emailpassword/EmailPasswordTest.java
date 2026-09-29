@@ -22,7 +22,6 @@ import io.supertokens.authRecipe.AuthRecipe;
 import io.supertokens.config.Config;
 import io.supertokens.emailpassword.EmailPassword;
 import io.supertokens.emailpassword.PasswordHashing;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.emailpassword.exceptions.ResetPasswordInvalidTokenException;
 import io.supertokens.emailpassword.exceptions.WrongCredentialsException;
 import io.supertokens.featureflag.EE_FEATURES;
@@ -33,11 +32,12 @@ import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.StorageUtils;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeStorage;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.pluginInterface.emailpassword.PasswordResetTokenInfo;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateEmailException;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicatePasswordResetTokenException;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateUserIdException;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.emailpassword.sqlStorage.EmailPasswordSQLStorage;
 import io.supertokens.pluginInterface.multitenancy.*;
 import io.supertokens.storageLayer.StorageLayer;
@@ -63,6 +63,9 @@ import static org.junit.Assert.*;
 public class EmailPasswordTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -181,7 +184,7 @@ public class EmailPasswordTest {
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "random@gmail.com", "validPass123");
 
         AuthRecipeUserInfo userInfo = ((AuthRecipeStorage) StorageLayer.getStorage(process.getProcess()))
-                .listPrimaryUsersByEmail(new TenantIdentifier(null, null, null), user.loginMethods[0].email)[0];
+                .listPrimaryUsersByEmail(process.getAppForTesting(), user.loginMethods[0].email)[0];
         assertNotEquals(userInfo.loginMethods[0].passwordHash, "validPass123");
         assertTrue(PasswordHashing.getInstance(process.getProcess()).verifyPasswordWithHash("validPass123",
                 userInfo.loginMethods[0].passwordHash));
@@ -206,10 +209,11 @@ public class EmailPasswordTest {
 
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "random@gmail.com", "validPass123");
 
-        String resetToken = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
+        String resetToken = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(),
+                user.getSupertokensUserId());
         PasswordResetTokenInfo resetTokenInfo = ((EmailPasswordSQLStorage) StorageLayer.getStorage(
                 process.getProcess()))
-                .getPasswordResetTokenInfo(new AppIdentifier(null, null),
+                .getPasswordResetTokenInfo(process.getAppForTesting().toAppIdentifier(),
                         io.supertokens.utils.Utils.hashSHA256(resetToken));
 
         assertNotEquals(resetToken, resetTokenInfo.token);
@@ -235,12 +239,13 @@ public class EmailPasswordTest {
 
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "random@gmail.com", "validPass123");
 
-        String resetToken = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
+        String resetToken = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(),
+                user.getSupertokensUserId());
 
         EmailPassword.resetPassword(process.getProcess(), resetToken, "newValidPass123");
 
         AuthRecipeUserInfo userInfo = ((AuthRecipeStorage) StorageLayer.getStorage(process.getProcess()))
-                .listPrimaryUsersByEmail(new TenantIdentifier(null, null, null), user.loginMethods[0].email)[0];
+                .listPrimaryUsersByEmail(process.getAppForTesting(), user.loginMethods[0].email)[0];
         assertNotEquals(userInfo.loginMethods[0].passwordHash, "newValidPass123");
 
         assertTrue(PasswordHashing.getInstance(process.getProcess()).verifyPasswordWithHash("newValidPass123",
@@ -254,9 +259,8 @@ public class EmailPasswordTest {
     public void passwordResetTokenExpiredCheck() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
         Utils.setValueInConfig("password_reset_token_lifetime", "10");
-        process.startProcess();
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -265,10 +269,12 @@ public class EmailPasswordTest {
 
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password");
 
-        String tok = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
+        String tok = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(),
+                user.getSupertokensUserId());
 
         assert (((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId()).length == 1);
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(),
+                        user.getSupertokensUserId()).length == 1);
 
         Thread.sleep(20);
 
@@ -280,7 +286,8 @@ public class EmailPasswordTest {
         }
 
         assert (((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId()).length == 0);
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(),
+                        user.getSupertokensUserId()).length == 0);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -300,18 +307,19 @@ public class EmailPasswordTest {
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password");
 
         EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
-        String tok = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
+        String tok = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(),
+                user.getSupertokensUserId());
         EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
 
         PasswordResetTokenInfo[] tokens = ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId());
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(), user.getSupertokensUserId());
 
         assert (tokens.length == 3);
 
         EmailPassword.resetPassword(process.getProcess(), tok, "newPassword");
 
         tokens = ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId());
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(), user.getSupertokensUserId());
         assert (tokens.length == 0);
 
         try {
@@ -340,7 +348,7 @@ public class EmailPasswordTest {
             return;
         }
         PasswordResetTokenInfo[] tokens = ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null),
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(),
                         "8ed86166-bfd8-4234-9dfe-abca9606dbd5");
 
         assert (tokens.length == 0);
@@ -386,14 +394,14 @@ public class EmailPasswordTest {
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password");
 
         ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .addPasswordResetToken(new AppIdentifier(null, null), new PasswordResetTokenInfo(
+                .addPasswordResetToken(process.getAppForTesting().toAppIdentifier(), new PasswordResetTokenInfo(
                         user.getSupertokensUserId(), "token",
                         System.currentTimeMillis() +
                                 Config.getConfig(process.getProcess()).getPasswordResetTokenLifetime(), "email"));
 
         try {
             ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                    .addPasswordResetToken(new AppIdentifier(null, null),
+                    .addPasswordResetToken(process.getAppForTesting().toAppIdentifier(),
                             new PasswordResetTokenInfo(user.getSupertokensUserId(), "token", System.currentTimeMillis()
                                     + Config.getConfig(process.getProcess()).getPasswordResetTokenLifetime(), "email"));
             assert (false);
@@ -440,13 +448,13 @@ public class EmailPasswordTest {
         }
 
         ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .signUp(new TenantIdentifier(null, null, null),
+                .signUp(process.getAppForTesting(),
                         "8ed86166-bfd8-4234-9dfe-abca9606dbd5", "test@example.com", "password",
                         System.currentTimeMillis());
 
         try {
             ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                    .signUp(new TenantIdentifier(null, null, null),
+                    .signUp(process.getAppForTesting(),
                             "8ed86166-bfd8-4234-9dfe-abca9606dbd5", "test1@example.com", "password",
                             System.currentTimeMillis());
             assert (false);
@@ -493,13 +501,13 @@ public class EmailPasswordTest {
         }
 
         ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .signUp(new TenantIdentifier(null, null, null),
+                .signUp(process.getAppForTesting(),
                         "8ed86166-bfd8-4234-9dfe-abca9606dbd5", "test@example.com", "password",
                         System.currentTimeMillis());
 
         try {
             ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                    .signUp(new TenantIdentifier(null, null, null),
+                    .signUp(process.getAppForTesting(),
                             "8ed86166-bfd8-4234-9dfe-abca9606dbd5", "test@example.com", "password",
                             System.currentTimeMillis());
             assert (false);
@@ -570,7 +578,7 @@ public class EmailPasswordTest {
         {
             String[] args = {"../"};
 
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
             if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -588,7 +596,7 @@ public class EmailPasswordTest {
 
             String[] args = {"../"};
 
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
             if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -606,7 +614,7 @@ public class EmailPasswordTest {
 
             String[] args = {"../"};
 
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
             ProcessState.EventAndException e = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
             assertNotNull(e);
             assertEquals(e.exception.getCause().getMessage(), "'password_reset_token_lifetime' must be >= 0");
@@ -620,11 +628,10 @@ public class EmailPasswordTest {
     public void testGeneratingResetPasswordTokenForNonEPUserNonPrimary() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -636,16 +643,18 @@ public class EmailPasswordTest {
                 "test@example.com");
 
         try {
-            EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.main, signInUpResponse.user.getSupertokensUserId());
+            EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(),
+                    signInUpResponse.user.getSupertokensUserId());
             assert false;
         } catch (UnknownUserIdException ignored) {
 
         }
 
-        String token = EmailPassword.generatePasswordResetToken(process.main, signInUpResponse.user.getSupertokensUserId(),
+        String token = EmailPassword.generatePasswordResetToken(process.getProcess(),
+                signInUpResponse.user.getSupertokensUserId(),
                 "test@example.com");
 
-        EmailPassword.ConsumeResetPasswordTokenResult res = EmailPassword.consumeResetPasswordToken(process.main,
+        EmailPassword.ConsumeResetPasswordTokenResult res = EmailPassword.consumeResetPasswordToken(process.getProcess(),
                 token);
         assert (res.email.equals("test@example.com"));
         assert (res.userId.equals(signInUpResponse.user.getSupertokensUserId()));
@@ -658,11 +667,10 @@ public class EmailPasswordTest {
     public void testGeneratingResetPasswordTokenForNonEPUserPrimary() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -673,12 +681,13 @@ public class EmailPasswordTest {
                 "user-google",
                 "test@example.com");
 
-        AuthRecipe.createPrimaryUser(process.main, signInUpResponse.user.getSupertokensUserId());
+        AuthRecipe.createPrimaryUser(process.getProcess(), signInUpResponse.user.getSupertokensUserId());
 
-        String token = EmailPassword.generatePasswordResetToken(process.main, signInUpResponse.user.getSupertokensUserId(),
+        String token = EmailPassword.generatePasswordResetToken(process.getProcess(),
+                signInUpResponse.user.getSupertokensUserId(),
                 "test@example.com");
 
-        EmailPassword.ConsumeResetPasswordTokenResult res = EmailPassword.consumeResetPasswordToken(process.main,
+        EmailPassword.ConsumeResetPasswordTokenResult res = EmailPassword.consumeResetPasswordToken(process.getProcess(),
                 token);
         assert (res.email.equals("test@example.com"));
         assert (res.userId.equals(signInUpResponse.user.getSupertokensUserId()));
@@ -691,11 +700,10 @@ public class EmailPasswordTest {
     public void testGeneratingResetPasswordTokenForNonEPUserPrimaryButDeletedWithOtherLinked() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -710,14 +718,16 @@ public class EmailPasswordTest {
                 "user-fb",
                 "test2@example.com");
 
-        AuthRecipe.createPrimaryUser(process.main, signInUpResponse.user.getSupertokensUserId());
-        AuthRecipe.linkAccounts(process.main, signInUpResponse2.user.getSupertokensUserId(), signInUpResponse.user.getSupertokensUserId());
-        assert (AuthRecipe.unlinkAccounts(process.main, signInUpResponse.user.getSupertokensUserId()));
+        AuthRecipe.createPrimaryUser(process.getProcess(), signInUpResponse.user.getSupertokensUserId());
+        AuthRecipe.linkAccounts(process.getProcess(), signInUpResponse2.user.getSupertokensUserId(),
+                signInUpResponse.user.getSupertokensUserId());
+        assert (AuthRecipe.unlinkAccounts(process.getProcess(), signInUpResponse.user.getSupertokensUserId()));
 
-        String token = EmailPassword.generatePasswordResetToken(process.main, signInUpResponse.user.getSupertokensUserId(),
+        String token = EmailPassword.generatePasswordResetToken(process.getProcess(),
+                signInUpResponse.user.getSupertokensUserId(),
                 "test@example.com");
 
-        EmailPassword.ConsumeResetPasswordTokenResult res = EmailPassword.consumeResetPasswordToken(process.main,
+        EmailPassword.ConsumeResetPasswordTokenResult res = EmailPassword.consumeResetPasswordToken(process.getProcess(),
                 token);
         assert (res.email.equals("test@example.com"));
         assert (res.userId.equals(signInUpResponse.user.getSupertokensUserId()));
@@ -730,11 +740,10 @@ public class EmailPasswordTest {
     public void deletionOfTpUserDeletesPasswordResetToken() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -746,17 +755,18 @@ public class EmailPasswordTest {
                 "test@example.com");
 
 
-        String token = EmailPassword.generatePasswordResetToken(process.main, signInUpResponse.user.getSupertokensUserId(),
+        String token = EmailPassword.generatePasswordResetToken(process.getProcess(),
+                signInUpResponse.user.getSupertokensUserId(),
                 "test@example.com");
         token = io.supertokens.utils.Utils.hashSHA256(token);
 
-        assertNotNull(((EmailPasswordSQLStorage) StorageLayer.getStorage(process.main)).getPasswordResetTokenInfo(
-                new AppIdentifier(null, null), token));
+        assertNotNull(((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess())).getPasswordResetTokenInfo(
+                process.getAppForTesting().toAppIdentifier(), token));
 
-        AuthRecipe.deleteUser(process.main, signInUpResponse.user.getSupertokensUserId());
+        AuthRecipe.deleteUser(process.getProcess(), signInUpResponse.user.getSupertokensUserId());
 
-        assertNull(((EmailPasswordSQLStorage) StorageLayer.getStorage(process.main)).getPasswordResetTokenInfo(
-                new AppIdentifier(null, null), token));
+        assertNull(((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess())).getPasswordResetTokenInfo(
+                process.getAppForTesting().toAppIdentifier(), token));
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -766,9 +776,8 @@ public class EmailPasswordTest {
     public void passwordResetTokenExpiredCheckWithConsumeCode() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
         Utils.setValueInConfig("password_reset_token_lifetime", "10");
-        process.startProcess();
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -777,10 +786,12 @@ public class EmailPasswordTest {
 
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password");
 
-        String tok = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
+        String tok = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(),
+                user.getSupertokensUserId());
 
         assert (((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId()).length == 1);
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(),
+                        user.getSupertokensUserId()).length == 1);
 
         Thread.sleep(20);
 
@@ -792,7 +803,8 @@ public class EmailPasswordTest {
         }
 
         assert (((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId()).length == 0);
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(),
+                        user.getSupertokensUserId()).length == 0);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -812,18 +824,19 @@ public class EmailPasswordTest {
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password");
 
         EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
-        String tok = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
+        String tok = EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(),
+                user.getSupertokensUserId());
         EmailPassword.generatePasswordResetTokenBeforeCdi4_0(process.getProcess(), user.getSupertokensUserId());
 
         PasswordResetTokenInfo[] tokens = ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId());
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(), user.getSupertokensUserId());
 
         assert (tokens.length == 3);
 
         EmailPassword.consumeResetPasswordToken(process.getProcess(), tok);
 
         tokens = ((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId());
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(), user.getSupertokensUserId());
         assert (tokens.length == 0);
 
         process.kill();
@@ -856,8 +869,7 @@ public class EmailPasswordTest {
     public void consumeCodeCorrectlySetsTheUserEmailForOlderTokens() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
-        process.startProcess();
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -870,9 +882,11 @@ public class EmailPasswordTest {
                 user.getSupertokensUserId());
 
         assert (((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId()).length == 1);
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(),
+                        user.getSupertokensUserId()).length == 1);
         assert (((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId())[0].email == null);
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(),
+                        user.getSupertokensUserId())[0].email == null);
 
         EmailPassword.ConsumeResetPasswordTokenResult result = EmailPassword.consumeResetPasswordToken(
                 process.getProcess(), tok);
@@ -880,7 +894,8 @@ public class EmailPasswordTest {
         assert (result.userId.equals(user.getSupertokensUserId()));
 
         assert (((EmailPasswordSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllPasswordResetTokenInfoForUser(new AppIdentifier(null, null), user.getSupertokensUserId()).length == 0);
+                .getAllPasswordResetTokenInfoForUser(process.getAppForTesting().toAppIdentifier(),
+                        user.getSupertokensUserId()).length == 0);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -890,11 +905,10 @@ public class EmailPasswordTest {
     @Test
     public void updateEmailFailsIfEmailUsedByOtherPrimaryUserInSameTenant() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -902,13 +916,14 @@ public class EmailPasswordTest {
         }
 
         AuthRecipeUserInfo user0 = EmailPassword.signUp(process.getProcess(), "someemail1@gmail.com", "somePass");
-        AuthRecipe.createPrimaryUser(process.main, user0.getSupertokensUserId());
+        AuthRecipe.createPrimaryUser(process.getProcess(), user0.getSupertokensUserId());
 
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "someemail@gmail.com", "somePass");
-        AuthRecipe.createPrimaryUser(process.main, user.getSupertokensUserId());
+        AuthRecipe.createPrimaryUser(process.getProcess(), user.getSupertokensUserId());
 
         try {
-            EmailPassword.updateUsersEmailOrPassword(process.main, user.getSupertokensUserId(), "someemail1@gmail.com", null);
+            EmailPassword.updateUsersEmailOrPassword(process.getProcess(), user.getSupertokensUserId(), "someemail1@gmail.com",
+                    null);
             assert (false);
         } catch (EmailChangeNotAllowedException ignored) {
 
@@ -922,35 +937,37 @@ public class EmailPasswordTest {
     public void updateEmailSucceedsIfEmailUsedByOtherPrimaryUserInDifferentTenantWhichThisUserIsNotAPartOf()
             throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
             return;
         }
 
-        Multitenancy.addNewOrUpdateAppOrTenant(process.main, new TenantIdentifier(null, null, null),
-                new TenantConfig(new TenantIdentifier(null, null, "t1"), new EmailPasswordConfig(true),
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), process.getAppForTesting(),
+                new TenantConfig(new TenantIdentifier(null, process.getAppForTesting().getAppId(), "t1"), new EmailPasswordConfig(true),
                         new ThirdPartyConfig(true, new ThirdPartyConfig.Provider[0]), new PasswordlessConfig(true),
                         null, null,
                         new JsonObject()));
 
-        Storage storage = (StorageLayer.getStorage(process.main));
+        Storage storage = (StorageLayer.getStorage(process.getProcess()));
         AuthRecipeUserInfo user0 = EmailPassword.signUp(
-                new TenantIdentifier(null, null, "t1"), storage, process.getProcess(),
+                new TenantIdentifier(null, process.getAppForTesting().getAppId(), "t1"), storage, process.getProcess(),
                 "someemail1@gmail.com",
                 "pass1234");
 
-        AuthRecipe.createPrimaryUser(process.main, user0.getSupertokensUserId());
+        AuthRecipe.createPrimaryUser(process.getProcess(), user0.getSupertokensUserId());
 
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "someemail@gmail.com", "somePass");
-        AuthRecipe.createPrimaryUser(process.main, user.getSupertokensUserId());
+        AuthRecipe.createPrimaryUser(process.getProcess(), user.getSupertokensUserId());
 
-        EmailPassword.updateUsersEmailOrPassword(process.main, user.getSupertokensUserId(), "someemail1@gmail.com", null);
+        EmailPassword.updateUsersEmailOrPassword(process.getProcess(), user.getSupertokensUserId(), "someemail1@gmail.com",
+                null);
+
+        Multitenancy.deleteTenant(new TenantIdentifier(null, process.getAppForTesting().getAppId(), "t1"), process.getProcess());
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -960,43 +977,45 @@ public class EmailPasswordTest {
     public void updateEmailFailsIfEmailUsedByOtherPrimaryUserInDifferentTenant()
             throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
             return;
         }
 
-        Multitenancy.addNewOrUpdateAppOrTenant(process.main, new TenantIdentifier(null, null, null),
-                new TenantConfig(new TenantIdentifier(null, null, "t1"), new EmailPasswordConfig(true),
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), process.getAppForTesting(),
+                new TenantConfig(new TenantIdentifier(null, process.getAppForTesting().getAppId(), "t1"), new EmailPasswordConfig(true),
                         new ThirdPartyConfig(true, new ThirdPartyConfig.Provider[0]), new PasswordlessConfig(true),
                         null, null,
                         new JsonObject()));
 
-        Storage storage = (StorageLayer.getStorage(process.main));
+        Storage storage = (StorageLayer.getStorage(process.getProcess()));
         AuthRecipeUserInfo user0 = EmailPassword.signUp(
-                new TenantIdentifier(null, null, "t1"), storage, process.getProcess(),
+                new TenantIdentifier(null, process.getAppForTesting().getAppId(), "t1"), storage, process.getProcess(),
                 "someemail1@gmail.com",
                 "pass1234");
 
-        AuthRecipe.createPrimaryUser(process.main, user0.getSupertokensUserId());
+        AuthRecipe.createPrimaryUser(process.getProcess(), user0.getSupertokensUserId());
 
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "someemail@gmail.com", "somePass");
-        AuthRecipe.createPrimaryUser(process.main, user.getSupertokensUserId());
+        AuthRecipe.createPrimaryUser(process.getProcess(), user.getSupertokensUserId());
 
-        Multitenancy.addUserIdToTenant(process.main,
-                new TenantIdentifier(null, null, "t1"), storage, user.getSupertokensUserId());
+        Multitenancy.addUserIdToTenant(process.getProcess(),
+                new TenantIdentifier(null, process.getAppForTesting().getAppId(), "t1"), storage, user.getSupertokensUserId());
 
         try {
-            EmailPassword.updateUsersEmailOrPassword(process.main, user.getSupertokensUserId(), "someemail1@gmail.com", null);
+            EmailPassword.updateUsersEmailOrPassword(process.getProcess(), user.getSupertokensUserId(), "someemail1@gmail.com",
+                    null);
             assert (false);
         } catch (EmailChangeNotAllowedException ignored) {
 
         }
+
+        Multitenancy.deleteTenant(new TenantIdentifier(null, process.getAppForTesting().getAppId(), "t1"), process.getProcess());
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));

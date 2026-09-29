@@ -36,7 +36,6 @@ import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.multitenancy.*;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
 import io.supertokens.session.Session;
-import io.supertokens.session.info.SessionInfo;
 import io.supertokens.session.info.SessionInformationHolder;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.test.TestingProcessManager;
@@ -56,6 +55,9 @@ import static org.junit.Assert.*;
 public class SessionTests {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -161,15 +163,14 @@ public class SessionTests {
         t3 = new TenantIdentifier(null, "a1", "t2");
         t4 = new TenantIdentifier(null, "a1", "t3");
     }
-    
+
     @Test
     public void testCreateSessionWithRecipeUserIdReturnsSessionWithPrimaryUserId() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -194,11 +195,10 @@ public class SessionTests {
     @Test
     public void testSessionIsRemovedWhileLinking() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -213,7 +213,8 @@ public class SessionTests {
 
         SessionInformationHolder session1 = Session.createNewSession(process.getProcess(),
                 user1.getSupertokensUserId(), new JsonObject(), new JsonObject());
-        SessionInformationHolder session2 = Session.createNewSession(process.getProcess(), "extid2", new JsonObject(), new JsonObject());
+        SessionInformationHolder session2 = Session.createNewSession(process.getProcess(), "extid2", new JsonObject(),
+                new JsonObject());
 
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), user1.getSupertokensUserId());
 
@@ -232,11 +233,10 @@ public class SessionTests {
     @Test
     public void testSessionIsRemovedWhileUnlinking() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -271,11 +271,10 @@ public class SessionTests {
     @Test
     public void testSessionBehaviourWhenUserBelongsTo2TenantsAndThenLinkedToSomeOtherUser1() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -289,7 +288,7 @@ public class SessionTests {
 
         AuthRecipeUserInfo user1 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com",
                 "password");
-        AuthRecipeUserInfo  user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test1@example.com",
+        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test1@example.com",
                 "password");
 
         AuthRecipe.createPrimaryUser(process.getProcess(), t1.toAppIdentifier(),
@@ -317,11 +316,10 @@ public class SessionTests {
     @Test
     public void testSessionBehaviourWhenUserBelongsTo2TenantsAndThenLinkedToSomeOtherUser2() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -333,9 +331,9 @@ public class SessionTests {
         Storage t1Storage = (StorageLayer.getStorage(t1, process.getProcess()));
         Storage t2Storage = (StorageLayer.getStorage(t2, process.getProcess()));
 
-        AuthRecipeUserInfo user1 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com", 
+        AuthRecipeUserInfo user1 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com",
                 "password");
-        AuthRecipeUserInfo  user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test1@example.com", 
+        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test1@example.com",
                 "password");
 
         AuthRecipe.createPrimaryUser(process.getProcess(), t1.toAppIdentifier(),
@@ -363,11 +361,10 @@ public class SessionTests {
     @Test
     public void testSessionBehaviourWhenUserBelongsTo2TenantsAndThenLinkedToSomeOtherUser3() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -379,9 +376,9 @@ public class SessionTests {
         Storage t1Storage = (StorageLayer.getStorage(t1, process.getProcess()));
         Storage t2Storage = (StorageLayer.getStorage(t2, process.getProcess()));
 
-        AuthRecipeUserInfo user1 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com", 
+        AuthRecipeUserInfo user1 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com",
                 "password");
-        AuthRecipeUserInfo  user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test1@example.com", 
+        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test1@example.com",
                 "password");
 
         AuthRecipe.createPrimaryUser(process.getProcess(), t1.toAppIdentifier(), t1Storage,
@@ -404,11 +401,10 @@ public class SessionTests {
     @Test
     public void testCreateSessionUsesPrimaryUserIdEvenWhenTheUserIsNotInThatTenant() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -422,7 +418,7 @@ public class SessionTests {
 
         AuthRecipeUserInfo user1 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com",
                 "password");
-        AuthRecipeUserInfo  user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test1@example.com",
+        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test1@example.com",
                 "password");
 
         AuthRecipe.createPrimaryUser(process.getProcess(), t1.toAppIdentifier(), t1Storage,
@@ -444,11 +440,10 @@ public class SessionTests {
     @Test
     public void testGetSessionForUserWithAndWithoutIncludingAllLinkedAccounts() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -469,14 +464,14 @@ public class SessionTests {
         Storage baseTenant = (StorageLayer.getBaseStorage(process.getProcess()));
 
         {
-            String[] sessions = Session.getAllNonExpiredSessionHandlesForUser(TenantIdentifier.BASE_TENANT, baseTenant,
+            String[] sessions = Session.getAllNonExpiredSessionHandlesForUser(process.getAppForTesting(), baseTenant,
                     user1.getSupertokensUserId(),
                     false);
             assertEquals(1, sessions.length);
             assertEquals(session1.session.handle, sessions[0]);
         }
         {
-            String[] sessions = Session.getAllNonExpiredSessionHandlesForUser(TenantIdentifier.BASE_TENANT, baseTenant,
+            String[] sessions = Session.getAllNonExpiredSessionHandlesForUser(process.getAppForTesting(), baseTenant,
                     user2.getSupertokensUserId(),
                     false);
             assertEquals(1, sessions.length);
@@ -484,12 +479,14 @@ public class SessionTests {
         }
 
         {
-            String[] sessions = Session.getAllNonExpiredSessionHandlesForUser(TenantIdentifier.BASE_TENANT, baseTenant, user1.getSupertokensUserId(),
+            String[] sessions = Session.getAllNonExpiredSessionHandlesForUser(process.getAppForTesting(), baseTenant,
+                    user1.getSupertokensUserId(),
                     true);
             assertEquals(2, sessions.length);
         }
         {
-            String[] sessions = Session.getAllNonExpiredSessionHandlesForUser(TenantIdentifier.BASE_TENANT, baseTenant, user2.getSupertokensUserId(),
+            String[] sessions = Session.getAllNonExpiredSessionHandlesForUser(process.getAppForTesting(), baseTenant,
+                    user2.getSupertokensUserId(),
                     true);
             assertEquals(2, sessions.length);
         }
@@ -501,11 +498,10 @@ public class SessionTests {
     @Test
     public void testRevokeSessionsForUserWithAndWithoutIncludingAllLinkedAccounts() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -529,7 +525,8 @@ public class SessionTests {
 
             Storage baseTenant = (
                     StorageLayer.getBaseStorage(process.getProcess()));
-            Session.revokeAllSessionsForUser(process.getProcess(), TenantIdentifier.BASE_TENANT, baseTenant, user1.getSupertokensUserId(), true);
+            Session.revokeAllSessionsForUser(process.getProcess(), process.getAppForTesting(), baseTenant,
+                    user1.getSupertokensUserId(), true);
 
             try {
                 Session.getSession(process.getProcess(), session1.session.handle);
@@ -555,7 +552,8 @@ public class SessionTests {
 
             Storage baseTenant = (
                     StorageLayer.getBaseStorage(process.getProcess()));
-            Session.revokeAllSessionsForUser(process.getProcess(), TenantIdentifier.BASE_TENANT, baseTenant, user2.getSupertokensUserId(), true);
+            Session.revokeAllSessionsForUser(process.getProcess(), process.getAppForTesting(), baseTenant,
+                    user2.getSupertokensUserId(), true);
 
             try {
                 Session.getSession(process.getProcess(), session1.session.handle);
@@ -581,7 +579,8 @@ public class SessionTests {
 
             Storage baseTenant = (
                     StorageLayer.getBaseStorage(process.getProcess()));
-            Session.revokeAllSessionsForUser(process.getProcess(), TenantIdentifier.BASE_TENANT, baseTenant, user1.getSupertokensUserId(), false);
+            Session.revokeAllSessionsForUser(process.getProcess(), process.getAppForTesting(), baseTenant,
+                    user1.getSupertokensUserId(), false);
 
             try {
                 Session.getSession(process.getProcess(), session1.session.handle);
@@ -603,7 +602,8 @@ public class SessionTests {
 
             Storage baseTenant = (
                     StorageLayer.getBaseStorage(process.getProcess()));
-            Session.revokeAllSessionsForUser(process.getProcess(), TenantIdentifier.BASE_TENANT, baseTenant, user2.getSupertokensUserId(), false);
+            Session.revokeAllSessionsForUser(process.getProcess(), process.getAppForTesting(), baseTenant,
+                    user2.getSupertokensUserId(), false);
 
             Session.getSession(process.getProcess(), session1.session.handle);
 
@@ -622,11 +622,10 @@ public class SessionTests {
     @Test
     public void testCreateSessionWithUserIdMappedForRecipeUser() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -641,10 +640,14 @@ public class SessionTests {
         UserIdMapping.createUserIdMapping(process.getProcess(), user1.getSupertokensUserId(), "extid1", null, false);
         UserIdMapping.createUserIdMapping(process.getProcess(), user2.getSupertokensUserId(), "extid2", null, false);
 
-        SessionInformationHolder session1 = Session.createNewSession(process.getProcess(), user1.getSupertokensUserId(), new JsonObject(), new JsonObject());
-        SessionInformationHolder session2 = Session.createNewSession(process.getProcess(), user2.getSupertokensUserId(), new JsonObject(), new JsonObject());
-        SessionInformationHolder session3 = Session.createNewSession(process.getProcess(), "extid1", new JsonObject(), new JsonObject());
-        SessionInformationHolder session4 = Session.createNewSession(process.getProcess(), "extid2", new JsonObject(), new JsonObject());
+        SessionInformationHolder session1 = Session.createNewSession(process.getProcess(), user1.getSupertokensUserId(),
+                new JsonObject(), new JsonObject());
+        SessionInformationHolder session2 = Session.createNewSession(process.getProcess(), user2.getSupertokensUserId(),
+                new JsonObject(), new JsonObject());
+        SessionInformationHolder session3 = Session.createNewSession(process.getProcess(), "extid1", new JsonObject(),
+                new JsonObject());
+        SessionInformationHolder session4 = Session.createNewSession(process.getProcess(), "extid2", new JsonObject(),
+                new JsonObject());
 
         assertEquals("extid1", session1.session.userId);
         assertEquals("extid1", session1.session.recipeUserId);

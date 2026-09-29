@@ -21,12 +21,12 @@ import io.supertokens.Main;
 import io.supertokens.StorageAndUserIdMapping;
 import io.supertokens.featureflag.exceptions.FeatureNotEnabledException;
 import io.supertokens.multitenancy.Multitenancy;
-import io.supertokens.multitenancy.exception.AnotherPrimaryUserWithEmailAlreadyExistsException;
-import io.supertokens.multitenancy.exception.AnotherPrimaryUserWithPhoneNumberAlreadyExistsException;
-import io.supertokens.multitenancy.exception.AnotherPrimaryUserWithThirdPartyInfoAlreadyExistsException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.AnotherPrimaryUserWithEmailAlreadyExistsException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.AnotherPrimaryUserWithPhoneNumberAlreadyExistsException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.AnotherPrimaryUserWithThirdPartyInfoAlreadyExistsException;
 import io.supertokens.pluginInterface.RECIPE_ID;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateEmailException;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
@@ -113,7 +113,8 @@ public class AssociateUserToTenantAPI extends WebserverAPI {
             result.addProperty("status", "THIRD_PARTY_USER_ALREADY_EXISTS_ERROR");
             super.sendJsonResponse(200, result, resp);
 
-        } catch (AnotherPrimaryUserWithEmailAlreadyExistsException | AnotherPrimaryUserWithPhoneNumberAlreadyExistsException |
+        } catch (AnotherPrimaryUserWithEmailAlreadyExistsException |
+                 AnotherPrimaryUserWithPhoneNumberAlreadyExistsException |
                  AnotherPrimaryUserWithThirdPartyInfoAlreadyExistsException e) {
             JsonObject result = new JsonObject();
             result.addProperty("status", "ASSOCIATION_NOT_ALLOWED_ERROR");

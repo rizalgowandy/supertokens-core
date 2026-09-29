@@ -44,10 +44,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeTrue;
 
 public class LoggingTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -61,8 +65,11 @@ public class LoggingTest {
 
     @Test
     public void noErrorLogsOnCoreStart() throws Exception {
+        // Skip this test if file logging is disabled (envvar set to null)
+        assumeTrue("File logging is disabled via environment variable", Utils.isFileLoggingEnabled());
+
         String[] args = {"../"};
-        TestingProcess process = TestingProcessManager.start(args);
+        TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
         boolean errorFlag = false;
@@ -89,8 +96,11 @@ public class LoggingTest {
 
     @Test
     public void defaultLogging() throws Exception {
+        // Skip this test if file logging is disabled (envvar set to null)
+        assumeTrue("File logging is disabled via environment variable", Utils.isFileLoggingEnabled());
+
         String[] args = {"../"};
-        TestingProcess process = TestingProcessManager.start(args);
+        TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
         Logging.error(process.getProcess(), TenantIdentifier.BASE_TENANT, "From test", false);
@@ -131,13 +141,16 @@ public class LoggingTest {
 
     @Test
     public void customLogging() throws Exception {
+        // Skip this test if file logging is disabled (envvar set to null)
+        assumeTrue("File logging is disabled via environment variable", Utils.isFileLoggingEnabled());
+
         try {
             String[] args = {"../"};
 
             Utils.setValueInConfig("info_log_path", "\"tempLogging/info.log\"");
             Utils.setValueInConfig("error_log_path", "\"tempLogging/error.log\"");
 
-            TestingProcess process = TestingProcessManager.start(args);
+            TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
             assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
             Logging.error(process.getProcess(), TenantIdentifier.BASE_TENANT, "From Test", false);
@@ -185,7 +198,7 @@ public class LoggingTest {
     public void confirmLoggerClosed() throws Exception {
 
         String[] args = {"../"};
-        TestingProcess process = TestingProcessManager.start(args);
+        TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
 
         assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
@@ -217,12 +230,10 @@ public class LoggingTest {
         System.setOut(new PrintStream(stdOutput));
         System.setErr(new PrintStream(errorOutput));
 
-        TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+        assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
         try {
-            process.startProcess();
-            assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
-
             Logging.debug(process.getProcess(), TenantIdentifier.BASE_TENANT, "outTest-dfkn3knsakn");
             Logging.error(process.getProcess(), TenantIdentifier.BASE_TENANT, "errTest-sdvjovnoasid", true);
 
@@ -251,14 +262,15 @@ public class LoggingTest {
         System.setOut(new PrintStream(stdOutput));
         System.setErr(new PrintStream(errorOutput));
 
-        TestingProcess process = TestingProcessManager.start(args, false);
+        // Use startProcess=false to avoid race condition with feature flag setup
+        TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
+        FeatureFlagTestContent.getInstance(process.getProcess())
+                .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
+                        EE_FEATURES.MULTI_TENANCY});
+        process.startProcess();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         try {
-            FeatureFlagTestContent.getInstance(process.getProcess())
-                    .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
-                            EE_FEATURES.MULTI_TENANCY});
-            process.startProcess();
-            assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
             if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
                 return;
@@ -284,9 +296,12 @@ public class LoggingTest {
             stdOutput.reset();
             errorOutput.reset();
 
+            JsonObject body = new JsonObject();
+            body.addProperty("email", "test@example.com");
+            body.addProperty("password", "abcd");
             try {
                 HttpRequestForTesting.sendJsonPOSTRequest(process.getProcess(), "",
-                        "http://localhost:3567/tenant2/recipe/signin", new JsonObject(), 1000, 1000, null,
+                        "http://localhost:3567/tenant2/recipe/signin", body, 1000, 1000, null,
                         Utils.getCdiVersionStringLatestForTests(), "emailpassword");
                 throw new Exception("Should not come here");
             } catch (io.supertokens.test.httpRequest.HttpResponseException e) {
@@ -325,11 +340,10 @@ public class LoggingTest {
         System.setOut(new PrintStream(stdOutput));
         System.setErr(new PrintStream(errorOutput));
 
-        TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+        assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
         try {
-            process.startProcess();
-            assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
             Logging.debug(process.getProcess(), TenantIdentifier.BASE_TENANT, "outTest-dfkn3knsakn");
             Logging.error(process.getProcess(), TenantIdentifier.BASE_TENANT, "errTest-sdvjovnoasid", true);
@@ -348,9 +362,12 @@ public class LoggingTest {
 
     @Test
     public void testThatSubFoldersAreCreated() throws Exception {
+        // Skip this test if file logging is disabled (envvar set to null)
+        assumeTrue("File logging is disabled via environment variable", Utils.isFileLoggingEnabled());
+
         String[] args = {"../"};
 
-        TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         try {
             Utils.setValueInConfig("info_log_path", "../temp/a/b/info.log");
             process.startProcess();
@@ -377,8 +394,11 @@ public class LoggingTest {
 
     @Test
     public void testDefaultLoggingFilePath() throws Exception {
+        // Skip this test if file logging is disabled (envvar set to null)
+        assumeTrue("File logging is disabled via environment variable", Utils.isFileLoggingEnabled());
+
         String[] args = {"../"};
-        TestingProcess process = TestingProcessManager.start(args);
+        TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
 
         assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 

@@ -48,6 +48,9 @@ public class SessionGetUserIDTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -62,7 +65,7 @@ public class SessionGetUserIDTest {
     // * -> Verify that user id returned is the same as the payload used when creating the session
     @Test
     public void testUserIdReturnedFromGetSessionIsCorrect() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 

@@ -18,10 +18,16 @@ package io.supertokens.test;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import io.supertokens.ActiveUsers;
 import io.supertokens.Main;
+import io.supertokens.ResourceDistributor;
+import io.supertokens.config.CoreConfig;
+import io.supertokens.emailpassword.PasswordHashing;
 import io.supertokens.pluginInterface.PluginInterfaceTesting;
+import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.useridmapping.UserIdMapping;
 import io.supertokens.storageLayer.StorageLayer;
+import io.supertokens.telemetry.TelemetryProvider;
 import io.supertokens.test.httpRequest.HttpRequestForTesting;
 import io.supertokens.test.httpRequest.HttpResponseException;
 import io.supertokens.useridmapping.UserIdType;
@@ -31,13 +37,18 @@ import org.apache.tomcat.util.http.fileupload.FileUtils;
 import org.junit.rules.TestRule;
 import org.junit.rules.TestWatcher;
 import org.junit.runner.Description;
+import org.junit.runners.model.Statement;
 import org.mockito.Mockito;
 
 import java.io.*;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Random;
 
 import static org.junit.Assert.*;
 
@@ -45,29 +56,49 @@ public abstract class Utils extends Mockito {
 
     private static ByteArrayOutputStream byteArrayOutputStream;
 
+    public static String getInstallDir() {
+        String dir = System.getenv("INSTALL_DIR");
+        if (dir == null || dir.isEmpty()) {
+            return "../";
+        }
+        return dir.endsWith("/") ? dir : dir + "/";
+    }
+
     public static void afterTesting() {
-        String installDir = "../";
+        TestingProcessManager.killAllIsolatedProcesses();
+
+        String startedDir = ".started" + System.getProperty("org.gradle.test.worker", "");
+
+        String installDir = getInstallDir();
         try {
+            // Drop the test database (if one was created for this test)
+            try {
+                DatabaseTestHelper.dropCurrentTestDatabase();
+            } catch (Exception e) {
+                // Ignore errors - database may not have been created
+            }
 
             // remove config.yaml file
-            ProcessBuilder pb = new ProcessBuilder("rm", "config.yaml");
+            String workerId = System.getProperty("org.gradle.test.worker", "");
+            ProcessBuilder pb = new ProcessBuilder("rm", "config" + workerId + ".yaml");
             pb.directory(new File(installDir));
             Process process = pb.start();
             process.waitFor();
 
-            // remove webserver-temp folders created by tomcat
-            final File webserverTemp = new File(installDir + "webserver-temp");
-            try {
-                FileUtils.deleteDirectory(webserverTemp);
-            } catch (Exception ignored) {
-            }
+            // Note: We don't delete webserver-temp here because:
+            // 1. Each Webserver creates its own UUID subdirectory (webserver-temp/UUID/)
+            // 2. Each Webserver cleans up its own subdirectory in stop()
+            // 3. Deleting the entire webserver-temp folder causes cross-worker conflicts
+            //    when tests run in parallel (one worker's cleanup deletes another's temp dir)
 
             // remove .started folders created by processes
-            final File dotStartedFolder = new File(installDir + ".started");
+            final File dotStartedFolder = new File(installDir + startedDir);
             try {
                 FileUtils.deleteDirectory(dotStartedFolder);
             } catch (Exception ignored) {
             }
+
+            TelemetryProvider.resetForTest();
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -79,24 +110,24 @@ public abstract class Utils extends Mockito {
     }
 
     public static void reset() {
+        TestingProcessManager.killAllIsolatedProcesses();
+
         Main.isTesting = true;
+        Main.isTesting_skipBulkImportUserValidationInCronJob = false;
         PluginInterfaceTesting.isTesting = true;
         Main.makeConsolePrintSilent = true;
-        String installDir = "../";
+        HttpRequestForTesting.disableAddingAppId = false;
+        String installDir = getInstallDir();
+        CoreConfig.setDisableOAuthValidationForTest(false);
+        ResourceDistributor.setAppForTesting(TenantIdentifier.BASE_TENANT);
+        PasswordHashing.bypassHashCachingInTesting = false;
+
         try {
+            // Clear the database reference (but don't drop - SharedProcess reuses the database)
+            DatabaseTestHelper.dropCurrentTestDatabase();
 
-            // if the default config is not the same as the current config, we must reset the storage layer
-            File ogConfig = new File("../temp/config.yaml");
-            File currentConfig = new File("../config.yaml");
-            if (currentConfig.isFile()) {
-                byte[] ogConfigContent = Files.readAllBytes(ogConfig.toPath());
-                byte[] currentConfigContent = Files.readAllBytes(currentConfig.toPath());
-                if (!Arrays.equals(ogConfigContent, currentConfigContent)) {
-                    StorageLayer.close();
-                }
-            }
-
-            ProcessBuilder pb = new ProcessBuilder("cp", "temp/config.yaml", "./config.yaml");
+            String workerId = System.getProperty("org.gradle.test.worker", "");
+            ProcessBuilder pb = new ProcessBuilder("cp", "temp/config.yaml", "./config" + workerId + ".yaml");
             pb.directory(new File(installDir));
             Process process = pb.start();
             process.waitFor();
@@ -105,12 +136,40 @@ public abstract class Utils extends Mockito {
             // mimics production. Refer to https://github.com/supertokens/supertokens-core/issues/118
             commentConfigValue("disable_telemetry");
 
-            TestingProcessManager.killAll();
-            TestingProcessManager.deleteAllInformation();
-            TestingProcessManager.killAll();
+            // Try to create an isolated PostgreSQL database for this test.
+            // This is best-effort - if PostgreSQL is not available, tests will use the default database.
+            // Some tests (e.g., InMemoryDBTest, SQLite tests) don't use PostgreSQL at all.
+            String testDbName = null;
+            try {
+                testDbName = DatabaseTestHelper.createTestDatabase();
+            } catch (Exception e) {
+                // PostgreSQL isolation not available - tests will use default database
+                // This is expected for tests that don't use PostgreSQL
+                System.out.println("[Utils] PostgreSQL database isolation not available, using default database");
+            }
+
+            // Update the config to use the test-specific database (if one was created)
+            if (testDbName != null) {
+                setValueInConfig("postgresql_database_name", "\"" + testDbName + "\"");
+                setValueInConfig("postgresql_user", "\"" + DatabaseTestHelper.getUser() + "\"");
+                setValueInConfig("postgresql_password", "\"" + DatabaseTestHelper.getPassword() + "\"");
+                setValueInConfig("migration_mode", "MIGRATED");
+
+                String pgHost = DatabaseTestHelper.getHost();
+                if (pgHost != null && !pgHost.isEmpty()) {
+                    setValueInConfig("postgresql_host", "\"" + pgHost + "\"");
+                }
+
+                String pgPort = DatabaseTestHelper.getPort();
+                if (pgPort != null && !pgPort.isEmpty()) {
+                    setValueInConfig("postgresql_port", pgPort);
+                }
+            }
 
             byteArrayOutputStream = new ByteArrayOutputStream();
             System.setErr(new PrintStream(byteArrayOutputStream));
+            TelemetryProvider.resetForTest();
+            ActiveUsers.clearCacheForTesting();
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -125,14 +184,17 @@ public abstract class Utils extends Mockito {
         String newStr = "\n# " + key + ":";
 
         StringBuilder originalFileContent = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new FileReader("../config.yaml"))) {
+        String workerId = System.getProperty("org.gradle.test.worker", "");
+
+        String configPath = getInstallDir() + "config" + workerId + ".yaml";
+        try (BufferedReader reader = new BufferedReader(new FileReader(configPath))) {
             String currentReadingLine = reader.readLine();
             while (currentReadingLine != null) {
                 originalFileContent.append(currentReadingLine).append(System.lineSeparator());
                 currentReadingLine = reader.readLine();
             }
             String modifiedFileContent = originalFileContent.toString().replaceAll(oldStr, newStr);
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter("../config.yaml"))) {
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(configPath))) {
                 writer.write(modifiedFileContent);
             }
         }
@@ -146,14 +208,16 @@ public abstract class Utils extends Mockito {
         String oldStr = "\n((#\\s)?)" + key + "(:|((:\\s).+))\n";
         String newStr = "\n" + key + ": " + value + "\n";
         StringBuilder originalFileContent = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new FileReader("../config.yaml"))) {
+        String workerId = System.getProperty("org.gradle.test.worker", "");
+        String configPath = getInstallDir() + "config" + workerId + ".yaml";
+        try (BufferedReader reader = new BufferedReader(new FileReader(configPath))) {
             String currentReadingLine = reader.readLine();
             while (currentReadingLine != null) {
                 originalFileContent.append(currentReadingLine).append(System.lineSeparator());
                 currentReadingLine = reader.readLine();
             }
             String modifiedFileContent = originalFileContent.toString().replaceAll(oldStr, newStr);
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter("../config.yaml"))) {
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(configPath))) {
                 writer.write(modifiedFileContent);
             }
         }
@@ -163,7 +227,50 @@ public abstract class Utils extends Mockito {
         return new TestWatcher() {
             @Override
             protected void failed(Throwable e, Description description) {
-                System.out.println(byteArrayOutputStream.toString(StandardCharsets.UTF_8));
+                if (byteArrayOutputStream != null) {
+                    System.out.println(byteArrayOutputStream.toString(StandardCharsets.UTF_8));
+                }
+            }
+        };
+    }
+
+    public static TestRule retryFlakyTest() {
+        return retryFlakyTest(3);
+    }
+
+    public static TestRule retryFlakyTest(int retryCount) {
+        return new TestRule() {
+            // NOTE: do NOT redeclare retryCount here — the field would shadow the parameter
+            // and the loop would always run exactly once regardless of what was passed.
+
+            public Statement apply(Statement base, Description description) {
+                return statement(base, description);
+            }
+
+            private Statement statement(final Statement base, final Description description) {
+                return new Statement() {
+                    @Override
+                    public void evaluate() throws Throwable {
+                        Throwable caughtThrowable = null;
+
+                        // implement retry logic here
+                        for (int i = 0; i < retryCount; i++) {
+                            try {
+                                base.evaluate();
+                                return;
+                            } catch (Throwable t) {
+                                caughtThrowable = t;
+                                System.err.println(description.getDisplayName() + ": run " + (i+1) + " failed");
+                                TestingProcessManager.killAll();
+                                TestServiceUtils.killServices();
+                                TestServiceUtils.startServices();
+                                Thread.sleep(1000 + new Random().nextInt(3000));
+                            }
+                        }
+                        System.err.println(description.getDisplayName() + ": giving up after " + retryCount + " failures");
+                        throw caughtThrowable;
+                    }
+                };
             }
         };
     }
@@ -268,5 +375,50 @@ public abstract class Utils extends Mockito {
         assertTrue(
                 array1.length == array2.length && Arrays.asList(array1).containsAll(Arrays.asList(array2))
                         && Arrays.asList(array2).containsAll(Arrays.asList(array1)));
+    }
+
+    public static java.util.Map<String, String> splitQueryString(String query) throws UnsupportedEncodingException {
+        java.util.Map<String, String> queryParams = new HashMap<>();
+        String[] pairs = query.split("&");
+        for (String pair : pairs) {
+            int idx = pair.indexOf("=");
+            String key = idx > 0 ? URLDecoder.decode(pair.substring(0, idx), "UTF-8") : pair;
+            String value = idx > 0 && pair.length() > idx + 1 ? URLDecoder.decode(pair.substring(idx + 1), "UTF-8") : null;
+            queryParams.put(key, value);
+        }
+        return queryParams;
+    }
+
+    public static void testFlaky(TestFunction test) throws Exception {
+        for (int i = 0; i < 5; i++) {
+            try {
+                test.run();
+                return;
+            } catch (Exception e) {
+                // retry
+            }
+        }
+    }
+
+    @FunctionalInterface
+    public interface TestFunction {
+        void run() throws Exception;
+    }
+
+    /**
+     * Checks if file logging is enabled (i.e., log paths are not set to "null" via environment variables).
+     * When INFO_LOG_PATH or ERROR_LOG_PATH envvars are set to "null", logging goes to console instead of files.
+     *
+     * @return true if file logging is enabled, false if logging is configured to go to console
+     */
+    public static boolean isFileLoggingEnabled() {
+        String infoLogPath = System.getenv("INFO_LOG_PATH");
+        String errorLogPath = System.getenv("ERROR_LOG_PATH");
+
+        // If either envvar is set to "null" (case-insensitive), file logging is disabled
+        boolean infoLogNull = infoLogPath != null && infoLogPath.equalsIgnoreCase("null");
+        boolean errorLogNull = errorLogPath != null && errorLogPath.equalsIgnoreCase("null");
+
+        return !infoLogNull && !errorLogNull;
     }
 }

@@ -38,6 +38,9 @@ public class GetRolesAPITest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -50,7 +53,7 @@ public class GetRolesAPITest {
 
     @Test
     public void testGettingRoles() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -60,9 +63,9 @@ public class GetRolesAPITest {
         }
 
         // create multiple roles
-        String[] roles = new String[] { "role1", "role2", "role3" };
+        String[] roles = new String[]{"role1", "role2", "role3"};
         for (String role : roles) {
-            UserRoles.createNewRoleOrModifyItsPermissions(process.main, role, null);
+            UserRoles.createNewRoleOrModifyItsPermissions(process.getProcess(), role, null);
         }
 
         // retrieve all created roles

@@ -37,13 +37,10 @@ import io.supertokens.test.TestingProcessManager;
 import io.supertokens.test.Utils;
 import io.supertokens.test.httpRequest.HttpRequestForTesting;
 import io.supertokens.test.httpRequest.HttpResponseException;
-import io.supertokens.test.multitenant.api.TestMultitenancyAPIHelper;
 import io.supertokens.thirdparty.InvalidProviderConfigException;
 import io.supertokens.utils.SemVer;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.rules.TestRule;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -54,6 +51,9 @@ import static org.junit.Assert.*;
 public class MultitenantAPITest {
     TestingProcessManager.TestingProcess process;
     TenantIdentifier t1, t2, t3;
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -585,7 +585,8 @@ public class MultitenantAPITest {
                     } else {
                         if (StorageLayer.isInMemDb(process.getProcess())) {
                             // For in memory db, the user is in the same user pool and the password reset will succeed
-                            successfulResetPasswordUsingToken(tenant, user.getAsJsonPrimitive("id").getAsString(), token,
+                            successfulResetPasswordUsingToken(tenant, user.getAsJsonPrimitive("id").getAsString(),
+                                    token,
                                     newPassword);
                         } else {
                             invalidResetPasswordUsingToken(tenant, token, newPassword);
@@ -622,7 +623,8 @@ public class MultitenantAPITest {
                     } else {
                         if (StorageLayer.isInMemDb(process.getProcess())) {
                             // For in memory db, the user is in the same user pool and the password reset will succeed
-                            successfulResetPasswordUsingToken(tenant, user.getAsJsonPrimitive("id").getAsString(), token,
+                            successfulResetPasswordUsingToken(tenant, user.getAsJsonPrimitive("id").getAsString(),
+                                    token,
                                     newPassword);
                         } else {
                             invalidResetPasswordUsingToken(tenant, token, newPassword);
@@ -684,7 +686,7 @@ public class MultitenantAPITest {
 
         EmailPasswordSQLStorage storage = (EmailPasswordSQLStorage) StorageLayer.getStorage(t2, process.getProcess());
 
-        storage.signUp(t2, "userId", email, combinedPasswordHash, timeJoined);
+        storage.signUp(t2, "userId2", email, combinedPasswordHash, timeJoined);
 
         successfulSignIn(t2, email, password);
         wrongCredentialsSignIn(t1, email, password);

@@ -7,6 +7,7 @@ import io.supertokens.inmemorydb.config.Config;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.inmemorydb.Start;
 import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.supertokens.inmemorydb.QueryExecutorTemplate.execute;
 import static io.supertokens.inmemorydb.QueryExecutorTemplate.update;
@@ -21,6 +22,11 @@ public class ActiveUsersQueries {
                 + "FOREIGN KEY (app_id) REFERENCES "
                 + Config.getConfig(start).getAppsTable() + "(app_id) ON DELETE CASCADE"
                 + " );";
+    }
+
+    static String getQueryToCreateLastActiveTimeIndexForUserLastActiveTable(Start start) {
+        return "CREATE INDEX user_last_active_last_active_time_index ON "
+                + Config.getConfig(start).getUserLastActiveTable() + "(last_active_time DESC, app_id DESC);";
     }
 
     public static int countUsersActiveSince(Start start, AppIdentifier appIdentifier, long sinceTime)
@@ -39,12 +45,48 @@ public class ActiveUsersQueries {
         });
     }
 
-    public static int countUsersActiveSinceAndHasMoreThanOneLoginMethod(Start start, AppIdentifier appIdentifier, long sinceTime)
+    public static int countUsersActiveSinceAndHasMoreThanOneLoginMethod(Start start, AppIdentifier appIdentifier,
+                                                                        long sinceTime)
+            throws SQLException, StorageQueryException {
+        if (Config.getConfig(start).getMigrationMode().readsFromNewTables()) {
+            return countUsersActiveSinceAndHasMoreThanOneLoginMethod_new(start, appIdentifier, sinceTime);
+        }
+        return countUsersActiveSinceAndHasMoreThanOneLoginMethod_legacy(start, appIdentifier, sinceTime);
+    }
+
+    private static int countUsersActiveSinceAndHasMoreThanOneLoginMethod_legacy(Start start,
+                                                                                 AppIdentifier appIdentifier,
+                                                                                 long sinceTime)
             throws SQLException, StorageQueryException {
         // TODO: Active users are present only on public tenant and MFA users may be present on different storages
         String QUERY = "SELECT count(1) as c FROM ("
                 + "  SELECT count(user_id) as num_login_methods, app_id, primary_or_recipe_user_id"
                 + "  FROM " + Config.getConfig(start).getUsersTable()
+                + "  WHERE primary_or_recipe_user_id IN ("
+                + "    SELECT user_id FROM " + Config.getConfig(start).getUserLastActiveTable()
+                + "    WHERE app_id = ? AND last_active_time >= ?"
+                + "  )"
+                + "  GROUP BY app_id, primary_or_recipe_user_id"
+                + ") uc WHERE num_login_methods > 1";
+        return execute(start, QUERY, pst -> {
+            pst.setString(1, appIdentifier.getAppId());
+            pst.setLong(2, sinceTime);
+        }, result -> {
+            if (result.next()) {
+                return result.getInt("c");
+            }
+            return 0;
+        });
+    }
+
+    private static int countUsersActiveSinceAndHasMoreThanOneLoginMethod_new(Start start,
+                                                                              AppIdentifier appIdentifier,
+                                                                              long sinceTime)
+            throws SQLException, StorageQueryException {
+        // TODO: Active users are present only on public tenant and MFA users may be present on different storages
+        String QUERY = "SELECT count(1) as c FROM ("
+                + "  SELECT count(user_id) as num_login_methods, app_id, primary_or_recipe_user_id"
+                + "  FROM " + Config.getConfig(start).getAppIdToUserIdTable()
                 + "  WHERE primary_or_recipe_user_id IN ("
                 + "    SELECT user_id FROM " + Config.getConfig(start).getUserLastActiveTable()
                 + "    WHERE app_id = ? AND last_active_time >= ?"
@@ -78,6 +120,22 @@ public class ActiveUsersQueries {
         });
     }
 
+    @TestOnly
+    public static int updateUserLastActive(Start start, AppIdentifier appIdentifier, String userId, long timestamp)
+            throws SQLException, StorageQueryException {
+        String QUERY = "INSERT INTO " + Config.getConfig(start).getUserLastActiveTable()
+                +
+                "(app_id, user_id, last_active_time) VALUES(?, ?, ?) ON CONFLICT(app_id, user_id) DO UPDATE SET " +
+                "last_active_time = ?";
+
+        return update(start, QUERY, pst -> {
+            pst.setString(1, appIdentifier.getAppId());
+            pst.setString(2, userId);
+            pst.setLong(3, timestamp);
+            pst.setLong(4, timestamp);
+        });
+    }
+
     public static void deleteUserActive_Transaction(Connection con, Start start, AppIdentifier appIdentifier,
                                                     String userId)
             throws StorageQueryException, SQLException {
@@ -90,7 +148,9 @@ public class ActiveUsersQueries {
         });
     }
 
-    public static int countUsersThatHaveMoreThanOneLoginMethodOrTOTPEnabledAndActiveSince(Start start, AppIdentifier appIdentifier, long sinceTime)
+    public static int countUsersThatHaveMoreThanOneLoginMethodOrTOTPEnabledAndActiveSince(Start start,
+                                                                                          AppIdentifier appIdentifier,
+                                                                                          long sinceTime)
             throws SQLException, StorageQueryException {
         // TODO: Active users are present only on public tenant and MFA users may be present on different storages
         String QUERY =

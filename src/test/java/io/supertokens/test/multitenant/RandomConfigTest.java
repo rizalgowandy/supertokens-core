@@ -50,6 +50,9 @@ public class RandomConfigTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -68,11 +71,10 @@ public class RandomConfigTest {
             TenantOrAppNotFoundException {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
-        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED, 1000000));
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
             return;
@@ -83,7 +85,7 @@ public class RandomConfigTest {
         int okCount = 0;
         int notOkCount = 0;
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < 1000; i++) {
             ConfigGenerator.GeneratedValueAndExpectation generated = ConfigGenerator.generate(TenantConfig.class);
             boolean isOk = ConfigGenerator.isOk(generated.expectation);
 

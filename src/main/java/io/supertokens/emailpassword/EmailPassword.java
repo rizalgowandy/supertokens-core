@@ -16,11 +16,24 @@
 
 package io.supertokens.emailpassword;
 
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.spec.InvalidKeySpecException;
+import java.util.List;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+
+import org.jetbrains.annotations.TestOnly;
+
 import io.supertokens.Main;
+import io.supertokens.ResourceDistributor;
+import io.supertokens.auditlog.AuditLog;
+import io.supertokens.pluginInterface.auditlog.AuditLogEvent;
 import io.supertokens.authRecipe.AuthRecipe;
 import io.supertokens.config.Config;
 import io.supertokens.config.CoreConfig;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.emailpassword.exceptions.ResetPasswordInvalidTokenException;
 import io.supertokens.emailpassword.exceptions.UnsupportedPasswordHashingFormatException;
 import io.supertokens.emailpassword.exceptions.WrongCredentialsException;
@@ -32,11 +45,13 @@ import io.supertokens.pluginInterface.StorageUtils;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
 import io.supertokens.pluginInterface.authRecipe.LoginMethod;
 import io.supertokens.pluginInterface.authRecipe.sqlStorage.AuthRecipeSQLStorage;
+import io.supertokens.pluginInterface.bulkimport.BulkImportStorage;
+import io.supertokens.pluginInterface.emailpassword.EmailPasswordImportUser;
 import io.supertokens.pluginInterface.emailpassword.PasswordResetTokenInfo;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateEmailException;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicatePasswordResetTokenException;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateUserIdException;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.emailpassword.sqlStorage.EmailPasswordSQLStorage;
 import io.supertokens.pluginInterface.emailverification.sqlStorage.EmailVerificationSQLStorage;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
@@ -45,16 +60,12 @@ import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
 import io.supertokens.pluginInterface.multitenancy.TenantConfig;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
+import io.supertokens.pluginInterface.useridmapping.LockedUser;
+import io.supertokens.pluginInterface.useridmapping.UserLockingStorage;
+import io.supertokens.pluginInterface.useridmapping.UserNotFoundForLockingException;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.utils.Utils;
 import io.supertokens.webserver.WebserverAPI;
-import org.jetbrains.annotations.TestOnly;
-
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.security.spec.InvalidKeySpecException;
 
 public class EmailPassword {
 
@@ -71,7 +82,7 @@ public class EmailPassword {
     @TestOnly
     public static long getPasswordResetTokenLifetimeForTests(Main main) {
         try {
-            return getPasswordResetTokenLifetime(new TenantIdentifier(null, null, null), main);
+            return getPasswordResetTokenLifetime(ResourceDistributor.getAppForTesting(), main);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
         }
@@ -87,7 +98,7 @@ public class EmailPassword {
             throws DuplicateEmailException, StorageQueryException {
         try {
             Storage storage = StorageLayer.getStorage(main);
-            return signUp(new TenantIdentifier(null, null, null), storage,
+            return signUp(ResourceDistributor.getAppForTesting(), storage,
                     main, email, password);
         } catch (TenantOrAppNotFoundException | BadPermissionException e) {
             throw new IllegalStateException(e);
@@ -95,16 +106,13 @@ public class EmailPassword {
     }
 
     public static AuthRecipeUserInfo signUp(TenantIdentifier tenantIdentifier, Storage storage, Main main,
-                                  @Nonnull String email, @Nonnull String password)
+                                            @Nonnull String email, @Nonnull String password)
             throws DuplicateEmailException, StorageQueryException, TenantOrAppNotFoundException,
             BadPermissionException {
 
         TenantConfig config = Multitenancy.getTenantInfo(main, tenantIdentifier);
         if (config == null) {
             throw new TenantOrAppNotFoundException(tenantIdentifier);
-        }
-        if (!config.emailPasswordConfig.enabled) {
-            throw new BadPermissionException("Email password login not enabled for tenant");
         }
 
         String hashedPassword = PasswordHashing.getInstance(main)
@@ -124,7 +132,7 @@ public class EmailPassword {
                         evStorage.startTransaction(con -> {
                             try {
                                 evStorage.updateIsEmailVerified_Transaction(tenantIdentifier.toAppIdentifier(), con,
-                                                newUser.getSupertokensUserId(), email, true);
+                                        newUser.getSupertokensUserId(), email, true);
                                 evStorage.commitTransaction(con);
 
                                 return null;
@@ -141,6 +149,11 @@ public class EmailPassword {
                     }
                 }
 
+                AuditLog.emit(main, storage, tenantIdentifier, new AuditLogEvent(
+                        tenantIdentifier.getAppId(), tenantIdentifier.getTenantId(),
+                        newUser.getSupertokensUserId(), newUser.getSupertokensUserId(),
+                        "emailpassword_sign_up", "success", "email", email,
+                        System.currentTimeMillis(), null));
                 return newUser;
             } catch (DuplicateUserIdException ignored) {
                 // we retry with a new userId (while loop)
@@ -157,7 +170,7 @@ public class EmailPassword {
             Storage storage = StorageLayer.getStorage(main);
 
             return importUserWithPasswordHash(
-                    new TenantIdentifier(null, null, null), storage, main, email,
+                    ResourceDistributor.getAppForTesting(), storage, main, email,
                     passwordHash, hashingAlgorithm);
         } catch (TenantOrAppNotFoundException | BadPermissionException e) {
             throw new IllegalStateException(e);
@@ -175,33 +188,69 @@ public class EmailPassword {
         if (config == null) {
             throw new TenantOrAppNotFoundException(tenantIdentifier);
         }
-        if (!config.emailPasswordConfig.enabled) {
-            throw new BadPermissionException("Email password login not enabled for tenant");
-        }
 
         PasswordHashingUtils.assertSuperTokensSupportInputPasswordHashFormat(
                 tenantIdentifier.toAppIdentifier(), main,
                 passwordHash, hashingAlgorithm);
 
+        EmailPasswordSQLStorage epStorage = StorageUtils.getEmailPasswordStorage(storage);
+        ImportUserResponse response = null;
+
+        try {
+            long timeJoined = System.currentTimeMillis();
+            response = createUserWithPasswordHash(tenantIdentifier, storage, email, passwordHash, timeJoined);
+        } catch (DuplicateEmailException e) {
+            AuthRecipeUserInfo[] allUsers = epStorage.listPrimaryUsersByEmail(tenantIdentifier, email);
+            AuthRecipeUserInfo userInfoToBeUpdated = null;
+            LoginMethod loginMethod = null;
+            for (AuthRecipeUserInfo currUser : allUsers) {
+                for (LoginMethod currLM : currUser.loginMethods) {
+                    if (currLM.email.equals(email) && currLM.recipeId == RECIPE_ID.EMAIL_PASSWORD && currLM.tenantIds.contains(tenantIdentifier.getTenantId())) {
+                        userInfoToBeUpdated = currUser;
+                        loginMethod = currLM;
+                        break;
+                    }
+                }
+            }
+
+            if (userInfoToBeUpdated != null) {
+                LoginMethod finalLoginMethod = loginMethod;
+                epStorage.startTransaction(con -> {
+                    epStorage.updateUsersPassword_Transaction(tenantIdentifier.toAppIdentifier(), con,
+                            finalLoginMethod.getSupertokensUserId(), passwordHash);
+                    return null;
+                });
+                response = new ImportUserResponse(true, userInfoToBeUpdated);
+            }
+        }
+        return response;
+    }
+
+    public static ImportUserResponse createUserWithPasswordHash(TenantIdentifier tenantIdentifier, Storage storage,
+            @Nonnull String email,
+            @Nonnull String passwordHash, long timeJoined)
+            throws StorageQueryException, DuplicateEmailException, TenantOrAppNotFoundException,
+            StorageTransactionLogicException {
+        EmailPasswordSQLStorage epStorage = StorageUtils.getEmailPasswordStorage(storage);
         while (true) {
             String userId = Utils.getUUID();
-            long timeJoined = System.currentTimeMillis();
-
-            EmailPasswordSQLStorage epStorage = StorageUtils.getEmailPasswordStorage(storage);
-
             try {
-                AuthRecipeUserInfo userInfo = epStorage.signUp(tenantIdentifier, userId, email, passwordHash,
-                        timeJoined);
+                AuthRecipeUserInfo userInfo = null;
+                userInfo = epStorage.signUp(tenantIdentifier, userId, email, passwordHash, timeJoined);
                 return new ImportUserResponse(false, userInfo);
             } catch (DuplicateUserIdException e) {
                 // we retry with a new userId
             } catch (DuplicateEmailException e) {
+                if(epStorage instanceof BulkImportStorage){
+                    throw e;
+                }
                 AuthRecipeUserInfo[] allUsers = epStorage.listPrimaryUsersByEmail(tenantIdentifier, email);
                 AuthRecipeUserInfo userInfoToBeUpdated = null;
                 LoginMethod loginMethod = null;
                 for (AuthRecipeUserInfo currUser : allUsers) {
                     for (LoginMethod currLM : currUser.loginMethods) {
-                        if (currLM.email.equals(email) && currLM.recipeId == RECIPE_ID.EMAIL_PASSWORD && currLM.tenantIds.contains(tenantIdentifier.getTenantId())) {
+                        if (currLM.email.equals(email) && currLM.recipeId == RECIPE_ID.EMAIL_PASSWORD &&
+                                currLM.tenantIds.contains(tenantIdentifier.getTenantId())) {
                             userInfoToBeUpdated = currUser;
                             loginMethod = currLM;
                             break;
@@ -222,6 +271,17 @@ public class EmailPassword {
         }
     }
 
+    public static void createMultipleUsersWithPasswordHash(Storage storage,
+                                                           List<EmailPasswordImportUser> usersToImport)
+            throws StorageQueryException, TenantOrAppNotFoundException, StorageTransactionLogicException {
+
+            EmailPasswordSQLStorage epStorage = StorageUtils.getEmailPasswordStorage(storage);
+            epStorage.startTransaction(con -> {
+                epStorage.signUpMultipleViaBulkImport_Transaction(con, usersToImport);
+                return null;
+            });
+    }
+
     @TestOnly
     public static ImportUserResponse importUserWithPasswordHash(Main main, @Nonnull String email,
                                                                 @Nonnull String passwordHash)
@@ -229,7 +289,7 @@ public class EmailPassword {
         try {
             Storage storage = StorageLayer.getStorage(main);
             return importUserWithPasswordHash(
-                    new TenantIdentifier(null, null, null), storage,
+                    ResourceDistributor.getAppForTesting(), storage,
                     main, email, passwordHash, null);
         } catch (TenantOrAppNotFoundException | BadPermissionException e) {
             throw new IllegalStateException(e);
@@ -242,7 +302,7 @@ public class EmailPassword {
             throws StorageQueryException, WrongCredentialsException {
         try {
             Storage storage = StorageLayer.getStorage(main);
-            return signIn(new TenantIdentifier(null, null, null), storage,
+            return signIn(ResourceDistributor.getAppForTesting(), storage,
                     main, email, password);
         } catch (TenantOrAppNotFoundException | BadPermissionException e) {
             throw new IllegalStateException(e);
@@ -259,9 +319,6 @@ public class EmailPassword {
         if (config == null) {
             throw new TenantOrAppNotFoundException(tenantIdentifier);
         }
-        if (!config.emailPasswordConfig.enabled) {
-            throw new BadPermissionException("Email password login not enabled for tenant");
-        }
 
         AuthRecipeUserInfo[] users = StorageUtils.getEmailPasswordStorage(storage)
                 .listPrimaryUsersByEmail(tenantIdentifier, email);
@@ -270,7 +327,8 @@ public class EmailPassword {
         LoginMethod lM = null;
         for (AuthRecipeUserInfo currUser : users) {
             for (LoginMethod currLM : currUser.loginMethods) {
-                if (currLM.recipeId == RECIPE_ID.EMAIL_PASSWORD && currLM.email.equals(email) && currLM.tenantIds.contains(tenantIdentifier.getTenantId())) {
+                if (currLM.recipeId == RECIPE_ID.EMAIL_PASSWORD && currLM.email.equals(email) &&
+                        currLM.tenantIds.contains(tenantIdentifier.getTenantId())) {
                     user = currUser;
                     lM = currLM;
                 }
@@ -299,6 +357,11 @@ public class EmailPassword {
             throw new WrongCredentialsException();
         }
 
+        AuditLog.emit(main, storage, tenantIdentifier, new AuditLogEvent(
+                tenantIdentifier.getAppId(), tenantIdentifier.getTenantId(),
+                lM.getSupertokensUserId(), user.getSupertokensUserId(),
+                "emailpassword_sign_in", "success", "email", email,
+                System.currentTimeMillis(), null));
         return user;
     }
 
@@ -308,7 +371,7 @@ public class EmailPassword {
         try {
             Storage storage = StorageLayer.getStorage(main);
             return generatePasswordResetTokenBeforeCdi4_0(
-                    new TenantIdentifier(null, null, null), storage,
+                    ResourceDistributor.getAppForTesting(), storage,
                     main, userId);
         } catch (TenantOrAppNotFoundException | BadPermissionException | WebserverAPI.BadRequestException e) {
             throw new IllegalStateException(e);
@@ -321,7 +384,7 @@ public class EmailPassword {
         try {
             Storage storage = StorageLayer.getStorage(main);
             return generatePasswordResetToken(
-                    new TenantIdentifier(null, null, null), storage,
+                    ResourceDistributor.getAppForTesting(), storage,
                     main, userId, null);
         } catch (TenantOrAppNotFoundException | BadPermissionException e) {
             throw new IllegalStateException(e);
@@ -334,7 +397,7 @@ public class EmailPassword {
         try {
             Storage storage = StorageLayer.getStorage(main);
             return generatePasswordResetToken(
-                    new TenantIdentifier(null, null, null), storage,
+                    ResourceDistributor.getAppForTesting(), storage,
                     main, userId, email);
         } catch (TenantOrAppNotFoundException | BadPermissionException e) {
             throw new IllegalStateException(e);
@@ -369,9 +432,6 @@ public class EmailPassword {
         TenantConfig config = Multitenancy.getTenantInfo(main, tenantIdentifier);
         if (config == null) {
             throw new TenantOrAppNotFoundException(tenantIdentifier);
-        }
-        if (!config.emailPasswordConfig.enabled) {
-            throw new BadPermissionException("Email password login not enabled for tenant");
         }
 
         while (true) {
@@ -414,7 +474,7 @@ public class EmailPassword {
             StorageTransactionLogicException {
         try {
             Storage storage = StorageLayer.getStorage(main);
-            return resetPassword(new TenantIdentifier(null, null, null), storage,
+            return resetPassword(ResourceDistributor.getAppForTesting(), storage,
                     main, token, password);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
@@ -488,7 +548,7 @@ public class EmailPassword {
             StorageTransactionLogicException {
         try {
             Storage storage = StorageLayer.getStorage(main);
-            return consumeResetPasswordToken(new TenantIdentifier(null, null, null), storage,
+            return consumeResetPasswordToken(ResourceDistributor.getAppForTesting(), storage,
                     token);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
@@ -586,7 +646,7 @@ public class EmailPassword {
             UnknownUserIdException, DuplicateEmailException, EmailChangeNotAllowedException {
         try {
             Storage storage = StorageLayer.getStorage(main);
-            updateUsersEmailOrPassword(new AppIdentifier(null, null), storage,
+            updateUsersEmailOrPassword(ResourceDistributor.getAppForTesting().toAppIdentifier(), storage,
                     main, userId, email, password);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
@@ -601,9 +661,18 @@ public class EmailPassword {
             EmailChangeNotAllowedException {
         EmailPasswordSQLStorage epStorage = StorageUtils.getEmailPasswordStorage(storage);
         AuthRecipeSQLStorage authRecipeStorage = StorageUtils.getAuthRecipeStorage(storage);
+        UserLockingStorage lockingStorage = (UserLockingStorage) storage;
         try {
             epStorage.startTransaction(transaction -> {
                 try {
+                    // Acquire lock on the user to prevent race conditions during email/password update
+                    LockedUser lockedUser;
+                    try {
+                        lockedUser = lockingStorage.lockUser(appIdentifier, transaction, userId);
+                    } catch (UserNotFoundForLockingException e) {
+                        throw new StorageTransactionLogicException(new UnknownUserIdException());
+                    }
+
                     AuthRecipeUserInfo user = authRecipeStorage.getPrimaryUserById_Transaction(appIdentifier,
                             transaction, userId);
 
@@ -622,29 +691,9 @@ public class EmailPassword {
                     }
 
                     if (email != null) {
-                        if (user.isPrimaryUser) {
-                            for (String tenantId : user.tenantIds) {
-                                AuthRecipeUserInfo[] existingUsersWithNewEmail =
-                                        authRecipeStorage.listPrimaryUsersByEmail_Transaction(
-                                                appIdentifier, transaction,
-                                                email);
-
-                                for (AuthRecipeUserInfo userWithSameEmail : existingUsersWithNewEmail) {
-                                    if (!userWithSameEmail.tenantIds.contains(tenantId)) {
-                                        continue;
-                                    }
-                                    if (userWithSameEmail.isPrimaryUser && !userWithSameEmail.getSupertokensUserId().equals(user.getSupertokensUserId())) {
-                                        throw new StorageTransactionLogicException(
-                                                new EmailChangeNotAllowedException());
-                                    }
-                                }
-                            }
-                        }
-
                         try {
-                            epStorage.updateUsersEmail_Transaction(appIdentifier, transaction,
-                                    userId, email);
-                        } catch (DuplicateEmailException e) {
+                            epStorage.updateUsersEmail_Transaction(appIdentifier, transaction, userId, email);
+                        } catch (DuplicateEmailException | EmailChangeNotAllowedException | UnknownUserIdException e) {
                             throw new StorageTransactionLogicException(e);
                         }
                     }
@@ -682,7 +731,7 @@ public class EmailPassword {
             throws StorageQueryException {
         try {
             Storage storage = StorageLayer.getStorage(main);
-            return getUserUsingId(new AppIdentifier(null, null), storage, userId);
+            return getUserUsingId(ResourceDistributor.getAppForTesting().toAppIdentifier(), storage, userId);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
         }

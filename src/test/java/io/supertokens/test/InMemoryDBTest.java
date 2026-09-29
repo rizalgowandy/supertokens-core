@@ -53,6 +53,9 @@ public class InMemoryDBTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -67,7 +70,7 @@ public class InMemoryDBTest {
     public void testCodeCreationRapidly() throws Exception {
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -110,7 +113,7 @@ public class InMemoryDBTest {
     public void testConcurrentMetadataUpdates() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -149,7 +152,7 @@ public class InMemoryDBTest {
     public void createAndForgetSession() throws Exception {
         {
             String[] args = {"../"};
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
             process.getProcess().setForceInMemoryDB();
             process.startProcess();
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -174,7 +177,7 @@ public class InMemoryDBTest {
         }
         {
             String[] args = {"../"};
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
             process.getProcess().setForceInMemoryDB();
             process.startProcess();
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -191,7 +194,7 @@ public class InMemoryDBTest {
     public void createAndGetSession() throws Exception {
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -229,7 +232,7 @@ public class InMemoryDBTest {
     public void createAndGetSessionNoAntiCSRF() throws Exception {
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -268,7 +271,7 @@ public class InMemoryDBTest {
         Utils.setValueInConfig("access_token_validity", "1");
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -301,7 +304,7 @@ public class InMemoryDBTest {
     public void createNewSessionAndAlterJWTPayload() throws Exception {
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -344,7 +347,7 @@ public class InMemoryDBTest {
     public void createAndGetSessionWithEmptyJWTPayload() throws Exception {
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -379,7 +382,7 @@ public class InMemoryDBTest {
     public void createAndGetSessionWithComplexJWTPayload() throws Exception {
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -427,7 +430,7 @@ public class InMemoryDBTest {
         Utils.setValueInConfig("access_token_validity", "1"); // 1 second
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -486,7 +489,7 @@ public class InMemoryDBTest {
         Utils.setValueInConfig("access_token_validity", "1"); // 1 second
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -542,7 +545,7 @@ public class InMemoryDBTest {
         Utils.setValueInConfig("access_token_validity", "1");
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -604,7 +607,8 @@ public class InMemoryDBTest {
         }
 
         SessionInformationHolder refreshedSession2 = Session.refreshSession(process.getProcess(),
-                refreshedSession.refreshToken.token, refreshedSession.antiCsrfToken, true, AccessToken.getLatestVersion());
+                refreshedSession.refreshToken.token, refreshedSession.antiCsrfToken, true,
+                AccessToken.getLatestVersion());
         assertEquals(((SessionStorage) StorageLayer.getStorage(process.getProcess())).getNumberOfSessions(
                 new TenantIdentifier(null, null, null)), 1);
 
@@ -630,7 +634,7 @@ public class InMemoryDBTest {
         Utils.setValueInConfig("access_token_validity", "1");
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -691,7 +695,8 @@ public class InMemoryDBTest {
         }
 
         SessionInformationHolder refreshedSession2 = Session.refreshSession(process.getProcess(),
-                refreshedSession.refreshToken.token, refreshedSession.antiCsrfToken, false, AccessToken.getLatestVersion());
+                refreshedSession.refreshToken.token, refreshedSession.antiCsrfToken, false,
+                AccessToken.getLatestVersion());
         assertEquals(((SessionStorage) StorageLayer.getStorage(process.getProcess()))
                 .getNumberOfSessions(new TenantIdentifier(null, null, null)), 1);
 
@@ -714,7 +719,7 @@ public class InMemoryDBTest {
     public void createAndGetSessionBadAntiCsrfFailure() throws Exception {
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -747,7 +752,7 @@ public class InMemoryDBTest {
         Utils.setValueInConfig("refresh_token_validity", "" + 1.5 / 60.0);
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -810,7 +815,8 @@ public class InMemoryDBTest {
             Thread.sleep(500);
 
             SessionInformationHolder newRefreshedSession2 = Session.refreshSession(main,
-                    newRefreshedSession.refreshToken.token, newRefreshedSession.antiCsrfToken, false, AccessToken.getLatestVersion());
+                    newRefreshedSession.refreshToken.token, newRefreshedSession.antiCsrfToken, false,
+                    AccessToken.getLatestVersion());
             assert newRefreshedSession2.refreshToken != null;
             assert newRefreshedSession2.accessToken != null;
             assertNotEquals(newRefreshedSession.accessToken.token, newRefreshedSession2.accessToken.token);
@@ -821,7 +827,8 @@ public class InMemoryDBTest {
             Thread.sleep(500);
 
             SessionInformationHolder newRefreshedSession3 = Session.refreshSession(main,
-                    newRefreshedSession2.refreshToken.token, newRefreshedSession2.antiCsrfToken, false, AccessToken.getLatestVersion());
+                    newRefreshedSession2.refreshToken.token, newRefreshedSession2.antiCsrfToken, false,
+                    AccessToken.getLatestVersion());
             assert newRefreshedSession3.refreshToken != null;
             assert newRefreshedSession3.accessToken != null;
             assertNotEquals(newRefreshedSession3.accessToken.token, newRefreshedSession2.accessToken.token);
@@ -838,7 +845,7 @@ public class InMemoryDBTest {
     @Test
     public void forceInMemDBIsTrueIfSetToTrue() throws InterruptedException {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         process.getProcess().setForceInMemoryDB();
         process.startProcess();
         assertTrue(process.getProcess().isForceInMemoryDB());
@@ -852,8 +859,7 @@ public class InMemoryDBTest {
     @Test
     public void forceInMemDBIsFalseByDefault() throws InterruptedException {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
-        process.startProcess();
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertFalse(process.getProcess().isForceInMemoryDB());
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
     }

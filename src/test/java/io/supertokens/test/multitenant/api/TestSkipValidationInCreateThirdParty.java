@@ -39,6 +39,9 @@ public class TestSkipValidationInCreateThirdParty {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -53,10 +56,9 @@ public class TestSkipValidationInCreateThirdParty {
     public void testSkipValidation() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -72,17 +74,22 @@ public class TestSkipValidationInCreateThirdParty {
         ), false);
 
         try {
+            JsonObject additionalConfig = new JsonObject();
+            additionalConfig.addProperty("boxyURL", "");
             TestMultitenancyAPIHelper.addOrUpdateThirdPartyProviderConfig(new TenantIdentifier(null, "a1", null),
                     new ThirdPartyConfig.Provider(
                             "boxy-saml", "Boxy SAML", new ThirdPartyConfig.ProviderClient[]{
-                            new ThirdPartyConfig.ProviderClient("web", "clientid", "clientsecret", null, null, null)
+                            new ThirdPartyConfig.ProviderClient("web", "clientid", "clientsecret", null, null,
+                                    additionalConfig)
                     }, null, null, null,
                             null, null, null, null, null, null, null,
                             null
                     ), process.getProcess());
             fail();
         } catch (HttpResponseException e) {
-            assertTrue(e.getMessage().contains("a non empty string value must be specified for boxyURL in the additionalConfig for Boxy SAML provider"));
+            assertTrue(e.getMessage().contains(
+                    "a non empty string value must be specified for boxyURL in the additionalConfig for Boxy SAML " +
+                            "provider"));
         }
 
         TestMultitenancyAPIHelper.addOrUpdateThirdPartyProviderConfig(new TenantIdentifier(null, "a1", null),

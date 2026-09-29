@@ -29,6 +29,7 @@ import io.supertokens.pluginInterface.exceptions.InvalidConfigException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.multitenancy.*;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
+import io.supertokens.pluginInterface.multitenancy.TenantConfig;
 import io.supertokens.session.jwt.JWT;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.test.TestingProcessManager;
@@ -37,6 +38,7 @@ import io.supertokens.test.httpRequest.HttpRequestForTesting;
 import io.supertokens.test.httpRequest.HttpResponseException;
 import io.supertokens.thirdparty.InvalidProviderConfigException;
 import io.supertokens.utils.SemVer;
+import io.supertokens.webserver.WebserverAPI;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -220,6 +222,11 @@ public class MultitenantAPITest {
 
     private JsonObject verifySession(TenantIdentifier tenantIdentifier, String accessToken)
             throws HttpResponseException, IOException {
+        return verifySession(tenantIdentifier, accessToken, SemVer.v3_0);
+    }
+
+    private JsonObject verifySession(TenantIdentifier tenantIdentifier, String accessToken, SemVer cdiVersion)
+            throws HttpResponseException, IOException {
         JsonObject request = new JsonObject();
         request.addProperty("accessToken", accessToken);
         request.addProperty("doAntiCsrfCheck", true);
@@ -228,7 +235,7 @@ public class MultitenantAPITest {
         JsonObject response = HttpRequestForTesting.sendJsonPOSTRequest(process.getProcess(), "",
                 HttpRequestForTesting.getMultitenantUrl(tenantIdentifier, "/recipe/session/verify"), request,
                 1000, 1000, null,
-                SemVer.v3_0.get(), "session");
+                cdiVersion.get(), "session");
         return response;
     }
 
@@ -377,6 +384,46 @@ public class MultitenantAPITest {
         }
     }
 
+    // Guardrail for the CDI 5.6 public-tenant restriction on /recipe/session/verify, now that core advertises
+    // 5.6 (so both legs are reachable over HTTP): at CDI >= 5.6 a non-public tenant is rejected (the gate), while
+    // at CDI 5.5 - below the gate - the same non-public tenant still verifies, so the gate does not regress
+    // pre-5.6 clients.
+    @Test
+    public void testVerifySessionFromNonPublicTenantIsGatedAtCdi5_6ButAllowedBelow() throws Exception {
+        if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+            return;
+        }
+
+        // The latest advertised version must be at/above the gate for the rejection leg to be reachable over HTTP.
+        assertTrue(WebserverAPI.getLatestCDIVersion().greaterThanOrEqualTo(SemVer.v5_6));
+
+        // t2 and t3 are non-public tenants (t1 is the public tenant of app a1).
+        for (TenantIdentifier tenant : new TenantIdentifier[]{t2, t3}) {
+            JsonObject userDataInJWT = new JsonObject();
+            userDataInJWT.addProperty("foo", "val1");
+            JsonObject userDataInDb = new JsonObject();
+            userDataInDb.addProperty("bar", "val1");
+
+            JsonObject session = createSession(tenant, "userid", userDataInJWT, userDataInDb);
+            String accessToken = session.get("accessToken").getAsJsonObject().get("token").getAsString();
+
+            // CDI >= 5.6: the gate rejects a non-public tenant with a 403.
+            try {
+                verifySession(tenant, accessToken, WebserverAPI.getLatestCDIVersion());
+                fail("expected a 403 for a non-public tenant at CDI >= 5.6");
+            } catch (HttpResponseException e) {
+                assertEquals(403, e.statusCode);
+                assertTrue(e.getMessage().contains("Only public tenantId can call this app specific API"));
+            }
+
+            // CDI 5.5 (below the gate): the same non-public tenant still verifies successfully.
+            JsonObject sessionResponse = verifySession(tenant, accessToken, SemVer.v5_5);
+            assertEquals("OK", sessionResponse.get("status").getAsString());
+            assertEquals(session.get("session").getAsJsonObject().get("handle").getAsString(),
+                    sessionResponse.get("session").getAsJsonObject().get("handle").getAsString());
+        }
+    }
+
     @Test
     public void testVerifySessionDoesNotWorkFromDifferentApp() throws Exception {
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -419,13 +466,15 @@ public class MultitenantAPITest {
 
         {
             JsonObject session = createSession(t1, "userid", new JsonObject(), new JsonObject());
-            JWT.JWTInfo accessTokenInfo = JWT.getPayloadWithoutVerifying(session.get("accessToken").getAsJsonObject().get("token").getAsString());
+            JWT.JWTInfo accessTokenInfo = JWT.getPayloadWithoutVerifying(
+                    session.get("accessToken").getAsJsonObject().get("token").getAsString());
             assertEquals(t1.getTenantId(), accessTokenInfo.payload.get("tId").getAsString());
         }
 
         {
             JsonObject session = createSession(t2, "userid", new JsonObject(), new JsonObject());
-            JWT.JWTInfo accessTokenInfo = JWT.getPayloadWithoutVerifying(session.get("accessToken").getAsJsonObject().get("token").getAsString());
+            JWT.JWTInfo accessTokenInfo = JWT.getPayloadWithoutVerifying(
+                    session.get("accessToken").getAsJsonObject().get("token").getAsString());
             assertEquals(t2.getTenantId(), accessTokenInfo.payload.get("tId").getAsString());
         }
     }
@@ -544,7 +593,7 @@ public class MultitenantAPITest {
             assertEquals(1, allSessionHandles.length);
             assertEquals(sessionHandles.get(2), allSessionHandles[0]);
         }
-        
+
         // Revoke sessions
         {
             String[] revokedSessionHandles = revokeAllUserSessionsAcrossAllTenants(t1, "userid", false);
@@ -568,7 +617,9 @@ public class MultitenantAPITest {
         assertEquals(0, allSessionHandles.length);
     }
 
-    private String[] getAllUserSessionsAcrossAllTenants(TenantIdentifier tenantIdentifier, String userid, Boolean fetchAcrossAllTenants) throws HttpResponseException, IOException {
+    private String[] getAllUserSessionsAcrossAllTenants(TenantIdentifier tenantIdentifier, String userid,
+                                                        Boolean fetchAcrossAllTenants)
+            throws HttpResponseException, IOException {
         Map<String, String> params = new HashMap<>();
         if (fetchAcrossAllTenants != null) {
             params.put("fetchAcrossAllTenants", fetchAcrossAllTenants.toString());
@@ -588,7 +639,9 @@ public class MultitenantAPITest {
         return sessionHandles;
     }
 
-    private String[] revokeAllUserSessionsAcrossAllTenants(TenantIdentifier tenantIdentifier, String userid, Boolean revokeAcrossAllTenants) throws HttpResponseException, IOException {
+    private String[] revokeAllUserSessionsAcrossAllTenants(TenantIdentifier tenantIdentifier, String userid,
+                                                           Boolean revokeAcrossAllTenants)
+            throws HttpResponseException, IOException {
         JsonObject requestBody = new JsonObject();
         requestBody.addProperty("userId", userid);
         if (revokeAcrossAllTenants != null) {

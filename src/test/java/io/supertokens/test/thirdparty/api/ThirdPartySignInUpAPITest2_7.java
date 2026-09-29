@@ -49,6 +49,9 @@ public class ThirdPartySignInUpAPITest2_7 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -63,7 +66,7 @@ public class ThirdPartySignInUpAPITest2_7 {
     // failure condition: test fails if signinup response does not match api spec
     @Test
     public void testGoodInput() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -95,7 +98,7 @@ public class ThirdPartySignInUpAPITest2_7 {
     // failure condition: test fails if signin causes a new user to be created
     @Test
     public void testEmailNormalisation() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -126,7 +129,7 @@ public class ThirdPartySignInUpAPITest2_7 {
     // simple bad input
     @Test
     public void testBadInput() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -167,7 +170,7 @@ public class ThirdPartySignInUpAPITest2_7 {
             } catch (io.supertokens.test.httpRequest.HttpResponseException e) {
                 assertTrue(e.statusCode == 400
                         && e.getMessage().equals("Http error. Status Code: 400. Message: Field name 'thirdPartyId' is "
-                                + "invalid " + "in " + "JSON input"));
+                        + "invalid " + "in " + "JSON input"));
             }
         }
         {
@@ -197,7 +200,7 @@ public class ThirdPartySignInUpAPITest2_7 {
     // email sub object's fields are missing
     @Test
     public void testBadInputInEmailSubObject() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -223,7 +226,7 @@ public class ThirdPartySignInUpAPITest2_7 {
             } catch (io.supertokens.test.httpRequest.HttpResponseException e) {
                 assertTrue(e.statusCode == 400
                         && e.getMessage().equals("Http error. Status Code: 400. Message: Field name 'id' is "
-                                + "invalid " + "in " + "JSON input"));
+                        + "invalid " + "in " + "JSON input"));
             }
         }
         {
@@ -238,7 +241,7 @@ public class ThirdPartySignInUpAPITest2_7 {
             } catch (io.supertokens.test.httpRequest.HttpResponseException e) {
                 assertTrue(e.statusCode == 400
                         && e.getMessage().equals("Http error. Status Code: 400. Message: Field name 'isVerified' is "
-                                + "invalid " + "in " + "JSON input"));
+                        + "invalid " + "in " + "JSON input"));
             }
         }
         process.kill();
@@ -246,7 +249,7 @@ public class ThirdPartySignInUpAPITest2_7 {
     }
 
     public static void checkSignInUpResponse(JsonObject response, String thirdPartyId, String thirdPartyUserId,
-            String email, boolean createdNewUser) {
+                                             String email, boolean createdNewUser) {
         assertEquals("OK", response.get("status").getAsString());
         assertEquals(3, response.entrySet().size());
         assertEquals(createdNewUser, response.get("createdNewUser").getAsBoolean());

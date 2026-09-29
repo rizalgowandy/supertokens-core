@@ -41,6 +41,9 @@ public class UpdateExternalUserIdInfoTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -53,7 +56,7 @@ public class UpdateExternalUserIdInfoTest {
 
     @Test
     public void testBadInput() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -188,7 +191,7 @@ public class UpdateExternalUserIdInfoTest {
 
     @Test
     public void testUpdatingExternalUserIdInfoWithUnknownUserId() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -258,7 +261,7 @@ public class UpdateExternalUserIdInfoTest {
 
     @Test
     public void testUpdatingExternalUserIdInfoWithSuperTokensUserId() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -269,11 +272,12 @@ public class UpdateExternalUserIdInfoTest {
 
         // create userId mapping with externalUserIdInfo
         String externalUserIdInfo = "externalUserIdInfo";
-        AuthRecipeUserInfo userInfo = EmailPassword.signUp(process.main, "test@example.com", "testPass123");
-        UserIdMapping userIdMapping = new io.supertokens.pluginInterface.useridmapping.UserIdMapping(userInfo.getSupertokensUserId(),
+        AuthRecipeUserInfo userInfo = EmailPassword.signUp(process.getProcess(), "test@example.com", "testPass123");
+        UserIdMapping userIdMapping = new io.supertokens.pluginInterface.useridmapping.UserIdMapping(
+                userInfo.getSupertokensUserId(),
                 "externalUserIdInfo", externalUserIdInfo);
 
-        Utils.createUserIdMappingAndCheckThatItExists(process.main, userIdMapping);
+        Utils.createUserIdMappingAndCheckThatItExists(process.getProcess(), userIdMapping);
 
         {
             // update mapping with new externalUserIdInfo with userIdType SUPERTOKENS
@@ -293,7 +297,7 @@ public class UpdateExternalUserIdInfoTest {
             assertEquals("OK", response.get("status").getAsString());
 
             // retrieve mapping and check that externalUserIdInfo got updated
-            UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.main,
+            UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.getProcess(),
                     userIdMapping.superTokensUserId, UserIdType.SUPERTOKENS);
             assertNotNull(retrievedMapping);
             assertEquals(updatedUserIdMapping, retrievedMapping);
@@ -317,7 +321,7 @@ public class UpdateExternalUserIdInfoTest {
             assertEquals("OK", response.get("status").getAsString());
 
             // retrieve mapping and check that externalUserIdInfo got updated
-            UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.main,
+            UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.getProcess(),
                     userIdMapping.superTokensUserId, UserIdType.SUPERTOKENS);
             assertNotNull(retrievedMapping);
             assertEquals(updatedUserIdMapping, retrievedMapping);
@@ -329,7 +333,7 @@ public class UpdateExternalUserIdInfoTest {
 
     @Test
     public void testUpdatingExternalUserIdInfoWithExternalUserId() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -340,11 +344,12 @@ public class UpdateExternalUserIdInfoTest {
 
         // create userId mapping with externalUserIdInfo
         String externalUserIdInfo = "externalUserIdInfo";
-        AuthRecipeUserInfo userInfo = EmailPassword.signUp(process.main, "test@example.com", "testPass123");
-        UserIdMapping userIdMapping = new io.supertokens.pluginInterface.useridmapping.UserIdMapping(userInfo.getSupertokensUserId(),
+        AuthRecipeUserInfo userInfo = EmailPassword.signUp(process.getProcess(), "test@example.com", "testPass123");
+        UserIdMapping userIdMapping = new io.supertokens.pluginInterface.useridmapping.UserIdMapping(
+                userInfo.getSupertokensUserId(),
                 "externalUserIdInfo", externalUserIdInfo);
 
-        Utils.createUserIdMappingAndCheckThatItExists(process.main, userIdMapping);
+        Utils.createUserIdMappingAndCheckThatItExists(process.getProcess(), userIdMapping);
 
         {
             // update mapping with new externalUserIdInfo with userIdType External
@@ -364,7 +369,7 @@ public class UpdateExternalUserIdInfoTest {
             assertEquals("OK", response.get("status").getAsString());
 
             // retrieve mapping and check that externalUserIdInfo got updated
-            UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.main,
+            UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.getProcess(),
                     userIdMapping.superTokensUserId, UserIdType.SUPERTOKENS);
             assertNotNull(retrievedMapping);
             assertEquals(updatedUserIdMapping, retrievedMapping);
@@ -388,7 +393,7 @@ public class UpdateExternalUserIdInfoTest {
             assertEquals("OK", response.get("status").getAsString());
 
             // retrieve mapping and check that externalUserIdInfo got updated
-            UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.main,
+            UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.getProcess(),
                     userIdMapping.superTokensUserId, UserIdType.SUPERTOKENS);
             assertNotNull(retrievedMapping);
             assertEquals(updatedUserIdMapping, retrievedMapping);
@@ -400,7 +405,7 @@ public class UpdateExternalUserIdInfoTest {
 
     @Test
     public void testDeletingExternalUserIdInfo() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -411,11 +416,12 @@ public class UpdateExternalUserIdInfoTest {
 
         // create userId mapping with externalUserIdInfo
         String externalUserIdInfo = "externalUserIdInfo";
-        AuthRecipeUserInfo userInfo = EmailPassword.signUp(process.main, "test@example.com", "testPass123");
-        UserIdMapping userIdMapping = new io.supertokens.pluginInterface.useridmapping.UserIdMapping(userInfo.getSupertokensUserId(),
+        AuthRecipeUserInfo userInfo = EmailPassword.signUp(process.getProcess(), "test@example.com", "testPass123");
+        UserIdMapping userIdMapping = new io.supertokens.pluginInterface.useridmapping.UserIdMapping(
+                userInfo.getSupertokensUserId(),
                 "externalUserIdInfo", externalUserIdInfo);
 
-        Utils.createUserIdMappingAndCheckThatItExists(process.main, userIdMapping);
+        Utils.createUserIdMappingAndCheckThatItExists(process.getProcess(), userIdMapping);
 
         // delete mapping by passing externalUserIdInfo as JSON null
         JsonObject requestBody = new JsonObject();
@@ -429,7 +435,7 @@ public class UpdateExternalUserIdInfoTest {
         assertEquals("OK", response.get("status").getAsString());
 
         // retrieve mapping and check that externalUserIdInfo is null
-        UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.main,
+        UserIdMapping retrievedMapping = io.supertokens.useridmapping.UserIdMapping.getUserIdMapping(process.getProcess(),
                 userIdMapping.superTokensUserId, UserIdType.ANY);
         assertNotNull(retrievedMapping);
         assertEquals(userIdMapping.superTokensUserId, retrievedMapping.superTokensUserId);

@@ -20,14 +20,14 @@ import com.google.gson.JsonObject;
 import io.supertokens.Main;
 import io.supertokens.StorageAndUserIdMapping;
 import io.supertokens.emailpassword.EmailPassword;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.multitenancy.exception.BadPermissionException;
 import io.supertokens.output.Logging;
 import io.supertokens.pluginInterface.RECIPE_ID;
 import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateEmailException;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.exceptions.StorageTransactionLogicException;
 import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
@@ -94,11 +94,11 @@ public class UserAPI extends WebserverAPI {
                     user = EmailPassword.getUserUsingId(
                             appIdentifier,
                             storageAndUserIdMapping.storage, userId);
-                            if (user != null) {
-                                UserIdMapping.populateExternalUserIdForUsers(appIdentifier,
-                                        storageAndUserIdMapping.storage,
-                                        new AuthRecipeUserInfo[]{user});
-                            }
+                    if (user != null) {
+                        UserIdMapping.populateExternalUserIdForUsers(appIdentifier,
+                                storageAndUserIdMapping.storage,
+                                new AuthRecipeUserInfo[]{user});
+                    }
 
                 } else {
                     // API is tenant specific for get by Email
@@ -127,7 +127,7 @@ public class UserAPI extends WebserverAPI {
                 JsonObject result = new JsonObject();
                 result.addProperty("status", "OK");
                 JsonObject userJson =
-                        getVersionFromRequest(req).greaterThanOrEqualTo(SemVer.v4_0) ? user.toJson() :
+                        getVersionFromRequest(req).greaterThanOrEqualTo(SemVer.v4_0) ? user.toJson(getVersionFromRequest(req).greaterThanOrEqualTo(SemVer.v5_3)) :
                                 user.toJsonWithoutAccountLinking();
 
                 if (getVersionFromRequest(req).lesserThan(SemVer.v3_0)) {

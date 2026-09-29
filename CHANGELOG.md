@@ -5,6 +5,1034 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [12.2.0]
+
+- **Upgrade note: the core now verifies the database schema at startup and, with `schema_check_strict_mode: true` (default), refuses to start until the manual migrations from the CHANGELOGs are applied**
+- Verifies the database schema at startup: missing tables/columns are reported with the SQL to add them; mismatched tenant databases refuse queries until migrated (re-checked every minute), or only log with `schema_check_strict_mode: false`
+- Session refresh no longer holds two DB connections at once, which deadlocked the pool at `connection_pool_size` concurrent refreshes
+- Signing-key lookups during token minting no longer open a nested transaction
+- Signing-key cache refresh is single-flight; readers serve the still-valid cached keys during rotation
+- Dashboard session expiry is now enforced at verification time (GHSA-w9fp-wv6g-pqv8)
+- Fixes the SAML login redirect when the IdP URL already contains a query string
+- Fixes config updates being wrongly rejected as conflicting when affected tenants inherit the changed values
+- Bulk import runs on a dedicated connection pool instead of borrowing from the live pool; failed chunks roll back to a savepoint and retries are bounded
+- Adds a regression test for the duplicate signing-key race on concurrent rotation (fixed in postgresql-plugin 9.8.0)
+- Corrects the 12.1.0 migration note: the `session_info` columns are a manual step
+- Updates the OTel javaagent to 2.29.0 and pins httpclient5/httpcore5 (CVE fixes)
+- Upgrades the embedded Tomcat to 11.0.25 to clear three critical CVEs (CVE-2026-65182, CVE-2026-65905, CVE-2026-68525)
+
+### Migration
+
+Applied automatically at startup (PostgreSQL >= 14). On large deployments already running 9.7.x, run
+the postgresql-plugin's `migration-scripts/v9.8.0.sql` ahead of the upgrade so the first dashboard
+search doesn't wait on it (safe to run online; `ANALYZE` samples the table, it does not scan it):
+
+```sql
+CREATE STATISTICS IF NOT EXISTS st_recipe_user_tenants_search_domain
+  ON (lower(split_part(account_info_value, '@', 2))) FROM recipe_user_tenants;
+CREATE STATISTICS IF NOT EXISTS st_recipe_user_tenants_search_tparty
+  ON (lower(account_info_value)) FROM recipe_user_tenants;
+ANALYZE recipe_user_tenants;
+```
+
+## [12.1.1]
+
+- In-memory (SQLite) dashboard user search (`getUsers_new`) now mirrors the postgresql storage's sargable prefix arms and adds matching partial indexes on `recipe_user_tenants`.
+
+### Migration
+
+Created/swapped automatically at startup; on large `recipe_user_tenants` tables pre-create them with
+`CREATE INDEX CONCURRENTLY` before upgrading to avoid a lock (note the transient two-index window on the account-info
+family). Canonical script: supertokens-postgresql-plugin
+[`migration-scripts/v9.7.1.sql`](https://github.com/supertokens/supertokens-postgresql-plugin/blob/master/migration-scripts/v9.7.1.sql)
+(run with psql autocommit, not in one transaction).
+
+```sql
+-- opclass swap of the account-info index (create the successor concurrently, then drop the predecessor)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_recipe_user_tenants_account_info_pattern ON recipe_user_tenants
+  (app_id, tenant_id, account_info_type, account_info_value text_pattern_ops);
+DROP INDEX CONCURRENTLY IF EXISTS idx_recipe_user_tenants_account_info;
+-- partial indexes for the email-domain and case-insensitive provider arms
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_recipe_user_tenants_search_domain ON recipe_user_tenants
+  (app_id, tenant_id, lower(split_part(account_info_value, '@', 2)) text_pattern_ops)
+  WHERE account_info_type = 'email';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_recipe_user_tenants_search_tparty ON recipe_user_tenants
+  (app_id, tenant_id, lower(account_info_value) text_pattern_ops)
+  WHERE account_info_type = 'tparty';
+```
+
+## [12.1.0]
+
+- Support for CDI version `5.6`
+- Updated plugin interface version to `9.0`
+- Adds `refresh_token_rotation_grace_period` config (seconds, default 30, range 0-300, app-level): how long the
+  previously active refresh token remains accepted after a rotation
+- Adds `access_token_validity_jitter` config (fraction, default 0.05, range 0-0.25, app-level): access token validity
+  is randomly shortened by up to this fraction when minted at session creation and refresh (never lengthened; token
+  regeneration keeps the original expiry); set to 0 to disable
+- Adds `recent_token_reuse_behaviour` config (`TOKEN_THEFT` (default) | `UNAUTHORISED`, config.yaml only): how reuse
+  of a recently rotated-out refresh token is reported; the session is revoked regardless
+- On CDI >= 5.6, session refresh rotates the refresh token within the refresh transaction, accepts the previous token
+  during the grace period, and revokes the session on reuse outside it
+- On CDI >= 5.6, `POST /recipe/session` and `POST /recipe/session/refresh` accept an optional shorten-only
+  `accessTokenValidity` (milliseconds) override for the minted access token; out-of-range values are rejected with 400
+- On CDI >= 5.6, session verification is stateless: `/recipe/session/verify` never writes to the database or returns
+  a replacement access token, and reports stored-payload changes via `payloadUpdateAvailable` when `checkDatabase` is
+  set
+- On CDI >= 5.6, `/recipe/session/verify` can only be called from the public tenant
+- Adds an opt-in `allowApproximate=true` query param to `GET /users/count` (CDI 5.6) serving a cached per-tenant
+  count plus a live delta, with new `approximate` / `asOf` response fields; default behavior is unchanged
+- Test-only: the 1M-user stress-test suite seeds OAuth data and measures the OAuth-dependent paths
+- Test-only: the 1M-user stress-test suite runs a separate leg per migration mode (LEGACY and MIGRATED)
+- Test-only: pins the token-regeneration invariants (in-place re-issue, DB-only update for expired input, no
+  rotation-state access)
+
+### Migration
+
+**Manual step required — NOT applied automatically.** The core only creates tables that do not exist yet
+(`CREATE TABLE IF NOT EXISTS`); it never adds columns to an existing table. On any database created by a core older
+than 12.1.0, run the following **before** starting the new core (from 12.1.2 the core detects the missing
+columns at startup: with the default `schema_check_strict_mode: true` it **refuses to start** until they exist,
+with `false` it logs them and session APIs fail with a schema-mismatch message pointing at the logs;
+12.1.0/12.1.1 start silently and fail every session API with `column prev_refresh_token_hash_2 does not exist`):
+
+```sql
+ALTER TABLE session_info ADD COLUMN IF NOT EXISTS prev_refresh_token_hash_2 VARCHAR(128);
+ALTER TABLE session_info ADD COLUMN IF NOT EXISTS refresh_token_rotated_at BIGINT;
+```
+
+Both columns are nullable; no backfill is required. The new `oauth_m2m_token_stats` rollup table *is* created
+automatically at startup (the legacy `oauth_m2m_tokens` table drains via the existing 31-day retention sweep).
+
+## [12.0.10]
+
+- fixes a SAML XML Signature Wrapping authentication bypass
+- adds additive indexes and smaller DB optimizations to speed up user listing, counting and other oauth session revocation. **Operators of large deployments should pre-create these indexes with
+`CREATE INDEX CONCURRENTLY` before upgrading** 
+
+### Migration
+
+Adds additive indexes, created on fresh databases and backfilled on
+existing ones at startup via
+
+``` sql
+
+CREATE INDEX IF NOT EXISTS idx_recipe_user_account_infos_app_primary_user ON recipe_user_account_infos 
+(app_id, primary_user_id);
+
+CREATE INDEX IF NOT EXISTS idx_recipe_user_account_infos_account_info ON recipe_user_account_infos 
+(app_id, account_info_type, account_info_value);
+
+CREATE INDEX IF NOT EXISTS oauth_session_client_id_index on oauth_sessions (app_id, client_id);
+
+CREATE INDEX IF NOT EXISTS oauth_session_session_handle_index on oauth_sessions (app_id, session_handle);
+```
+
+No table or column changes. **Operators of large deployments should pre-create these indexes with
+`CREATE INDEX CONCURRENTLY` before upgrading**, so the startup DDL is a no-op and does not hold a table lock
+during a long index build.
+
+## [12.0.9]
+
+- Enforces the 31-day activity log retention on the in-memory (SQLite) store via a direct delete in the
+  partition maintenance hook (it previously kept entries for the lifetime of the process)
+- Fixes user pagination truncating (newest-first) or never terminating (oldest-first) after bulk-importing linked
+  users whose per-method `time_joined` values diverge. Bulk import now normalizes each linked group's
+  `primary_or_recipe_user_time_joined` to the group's `MIN(time_joined)` after all login methods are inserted,
+  restoring the keyset-pagination invariant (see supertokens-core#1347)
+- Adds `updateTimeJoinedForPrimaryUsers_Transaction` to `AuthRecipeSQLStorage`
+- Fixes bulk import endlessly retrying users whose external user ID is already mapped; such imports now fail with `E031`
+- Test-only: the 1M-user stress-test suite now records non-OK results per seeding step and fails the run at the end if
+  any step errored, and its workflow can be triggered manually via `workflow_dispatch`
+- Test-only: the 1M-user stress-test suite now measures the scale-sensitive query paths (paginated listing, user
+  counts, dashboard search, third-party sign-in, linked-user email/phone updates, tenant association, account
+  link-check/unlink/delete, active-user counts, feature-flag usage stats, role listing/deletion, TOTP verification with
+  many used codes, and email-verification/delete for id-mapped users) against the 1M-user state, renders them in the
+  workflow "Stress Test Results" table, and fails the run when a step exceeds an env-overridable per-step duration
+  budget
+- Test-only: the 1M-user stress-test suite now harvests `pg_stat_statements` — snapshotting the ingest profile when
+  seeding finishes (then resetting) and the steady-state read/query profile at the end — renders per-phase tables (top
+  statements by total execution time and every statement that spilled to temp) into `stats.json` and the workflow step
+  summary, and fails the run when a read-phase statement writes more than an env-overridable number of temp blocks
+- Test-only: the 1M-user stress-test suite now runs the measured read-path steps at two dataset sizes (a ~100k-user
+  checkpoint mid-seed and the full 1M) and asserts the per-step cost ratio `time(1M)/time(100k)` against an
+  env-overridable per-class bound (O(1) steps ≤ 3×, O(n) steps ≤ 15×) — a hardware-independent check for superlinear
+  scaling that the absolute duration budgets can't catch; the small/large/ratio columns are rendered in the workflow
+  "Stress Test Results" table and the run fails when a step's ratio exceeds its bound
+  (default 10k ≈ 80 MB)
+- Test-only: the 1M-user stress-test suite now enforces per-step duration budgets as hard timeouts (each measured step
+  is raced against its budget, so a hung step fails the run at its budget with the step name instead of hanging until
+  the job timeout) and guards the pagination full-walk steps against non-termination and silent truncation (aborting on
+  a repeated pagination token or a runaway page count, and asserting the walk visited the whole dataset within 1% of the
+  tenant's user count); timed-out and failed steps are recorded in `stats.json` and surfaced in the workflow "Stress
+  Test Results" table with their failure reason, and `supertokens-node` is pinned to an exact version for
+  reproducibility
+- Test-only: the 1M-user stress-test suite now runs the measured read-path steps collect-and-continue — a guard
+  violation, timeout or thrown error records that step as failed and the run moves on to the next step instead of
+  aborting at the first failure, so one run surfaces every read-path failure at once (seeding failures stay immediately
+  fatal). A timed-out step is now aborted cooperatively (the pagination walk checks the step's abort signal each
+  iteration and stops issuing requests) so it can't keep hitting the core and polluting later measurements; a step that
+  failed on one of the two dataset sizes reports its scaling ratio as `n/a`; steps that ran after an earlier failure are
+  flagged in the "Stress Test Results" table as possibly tainted; the pagination completeness-guard failure now reports
+  the terminal page's pagination token and first/last `(timeJoined, userId)`; and an end-of-run stage fails the job
+  listing every failed step
+
+### Migration
+
+Adds three additive indexes, created on fresh databases and backfilled on existing ones at startup via
+
+``` sql
+
+CREATE INDEX IF NOT EXISTS idx_recipe_user_tenants_tenant_recipe_user on recipe_user_tenants (app_id, tenant_id, 
+recipe_user_id);
+
+CREATE INDEX IF NOT EXISTS app_id_to_user_id_linked_flag_index on app_id_to_user_id (app_id, user_id, 
+is_linked_or_is_a_primary_user);
+
+CREATE INDEX IF NOT EXISTS idx_primary_user_tenants_tenant_primary on primary_user_tenants (app_id, tenant_id, 
+primary_user_id);
+
+```
+
+No table or column changes. **Operators of very large deployments should pre-create these three indexes with
+`CREATE INDEX CONCURRENTLY` before upgrading**, so the startup DDL is a no-op and does not hold a table lock
+during a long index build.
+
+## [12.0.8]
+
+- Security improvements around api-key/ip allow list handling
+- Adds `supertokens_min_cdi_version` config to reject requests using a CDI version below a configured minimum
+- Adds CDI 5.5: webauthn sign-in options are single-use — consumed atomically on successful sign in (replay returns
+  `OPTIONS_NOT_FOUND_ERROR`); requests on CDI <= 5.4 are unaffected. Requires SDKs on CDI 5.5 to verify each assertion
+  exactly once (see supertokens-core#1195)
+- Adds `removeOptions_Transaction` to `WebAuthNSQLStorage` (plugin-interface addition; needs a plugin-interface version
+  bump at release)
+- Fixes OAuth2 response code in case of malformed/invalid input (e.g. missing `client_id` or `redirect_uri`) to be 400
+  instead of 500
+- Optimizes Bulk Import to not create a separate connection pool when there is no work to be done
+- Optimizes MAU counting query
+
+## [12.0.7]
+
+- Fix no-op account info updates
+
+## [12.0.6]
+
+- Upgrade dependencies to go beyond known CVE's.
+- Test-only: the migration-mode variants of the account-linking test skip the in-memory storage, which does not
+  honor `migration_mode` from config (hardcoded `MIGRATED`); mode-dependent coverage for that flow runs in the
+  postgresql matrix
+
+## [12.0.5]
+
+- Fixes otel init without java agent (with the fresh otel sdk)
+- Resolves the OTel service name from ECS container metadata when available
+- Fixes a 12.0.0 regression of `linkAccounts` to be idempotent when the recipe user is already the target primary user:
+  in non-`LEGACY` migration modes this case now returns `accountsAlreadyLinked=true` (matching pre-12.0 and `LEGACY` behaviour)
+  instead of throwing `CannotLinkSinceRecipeUserIdAlreadyLinkedWithAnotherPrimaryUserIdException`
+- The `migration_mode` transition to `MIGRATED` now also requires the backfill completeness scan
+  (`verifyBackfillCompleteness`) to report zero inconsistent users, in addition to `pendingUsers == 0`, so users
+  missing reservation rows can no longer be stranded once reads leave the old tables
+- Changing `migration_mode` on an existing tenant (via the multitenancy CRUD endpoint) now takes effect on the
+  live storage instance without a core restart
+- Users signed up while `migration_mode` is `LEGACY` are no longer permanently skipped by the reservation-tables
+  backfill
+
+## [12.0.4]
+
+- Fixes an issue with deleting user-id mapped users
+
+## [12.0.3]
+
+- Adds an append-only `activity_log` audit log; a `user_last_active` event is now written to it whenever a user's last-active timestamp is updated
+- Adds the `CleanupActivityLogPartitions` cron that maintains the `activity_log` month-partitions (pre-creates upcoming months, drops a partition once its whole month is older than 31 days)
+- Removes the external `AuditLogSink` plugin mechanism
+
+### Migration
+
+The `activity_log` table DDL is in [SCHEMA-REWORK.md](SCHEMA-REWORK.md#pre-flight).
+
+## [12.0.2]
+
+- Fix: Protection against SAML XML signature wrapping (XSW) attack.
+
+## [12.0.1]
+
+- Fix: Allow new CUDs to be created as MIGRATED
+
+## [12.0.0]
+
+- Fix: SAML attribute values with `xsi:type="xsd:string"` are no longer silently dropped
+- Fix: SAML email extraction now checks `mail` and `email` claim attributes in addition to the WS-Federation URI claim and NameID
+- Fix: fixes permission issues with the installer's jre
+- Fix: upgrade embedded tomcat and the OTEL related libs because of security vulnerabilities
+
+- Lowers default transaction isolation level from SERIALIZABLE to READ_COMMITTED
+- Adds per-tenant `migration_mode` config with a state-machine validator for staged schema migration
+- Adds `BackfillReservationTables` cron job for online backfill
+- Adds `GET /migration/mode` and `GET /migration/backfill/progress` operator endpoints
+- Adds offline migration SQL scripts in `supertokens-postgresql-plugin/migration-scripts/`
+- Rewrites conflict detection for `makePrimaryUser`, `linkAccounts`, and `updateEmail` using `LockedUser` interfaces
+- Throttles `user_last_active` upserts on session refresh
+- Storages now warm up in parallel during boot
+
+### Migration
+
+See [SCHEMA-REWORK.md](SCHEMA-REWORK.md) for the operator runbook; the full schema DDL is in its [Pre-flight](SCHEMA-REWORK.md#pre-flight) section.
+
+## [11.4.4]
+
+- Fix: adds the otel-javaagent to the installed distribution
+- Fix: validate licenseKey field to reject misspelled or malformed input
+
+## [11.4.3]
+
+- Fix: uses the right transaction isolation level with oauth2 refresh tokens to avoid false-positive conflicts at DB
+  level
+
+## [11.4.2]
+
+- Fixes Tenant/App/CUD APIs to not to lock the whole world for a read
+- Fixes concurrency issue with oauth refresh tokens
+
+## [11.4.1]
+
+- Fixes OTEL initialization when there is no javaagent
+- Fixes a thread-leak issue with Bulk Migration
+
+## [11.4.0]
+
+- Exposes bulk query APIs for usermetadata and TOTP
+
+## [11.3.3]
+
+- Catches and logs RuntimeException while initializing SAML
+- Fixes SAML request signing
+
+## [11.3.2]
+
+- Adds more tests to webauthn
+- Regenerates `implementationDependencies.json`
+- Adds support for Android native origins (those starting with `android:apk-key-hash:`) in WebAuthn
+
+## [11.3.1]
+
+- Fixes request context for SAML to support all login types on IDP
+
+## [11.3.0]
+
+- Adds SAML features
+- Fixes potential deadlock issue with `TelemetryProvider`
+- Adds DeadlockLogger as an utility for discovering deadlock issues
+
+### Migration
+
+```sql
+CREATE TABLE IF NOT EXISTS saml_clients (
+    app_id VARCHAR(64) NOT NULL DEFAULT 'public',
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'public',
+    client_id VARCHAR(256) NOT NULL,
+    client_secret TEXT,
+    sso_login_url TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    default_redirect_uri TEXT NOT NULL,
+    idp_entity_id VARCHAR(256) NOT NULL,
+    idp_signing_certificate TEXT NOT NULL,
+    allow_idp_initiated_login BOOLEAN NOT NULL DEFAULT FALSE,
+    enable_request_signing BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    CONSTRAINT saml_clients_pkey PRIMARY KEY(app_id, tenant_id, client_id),
+    CONSTRAINT saml_clients_idp_entity_id_key UNIQUE (app_id, tenant_id, idp_entity_id),
+    CONSTRAINT saml_clients_app_id_fkey FOREIGN KEY(app_id) REFERENCES apps (app_id) ON DELETE CASCADE,
+    CONSTRAINT saml_clients_tenant_id_fkey FOREIGN KEY(app_id, tenant_id) REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS saml_clients_app_id_tenant_id_index ON saml_clients (app_id, tenant_id);
+
+CREATE TABLE IF NOT EXISTS saml_relay_state (
+    app_id VARCHAR(64) NOT NULL DEFAULT 'public',
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'public',
+    relay_state VARCHAR(256) NOT NULL,
+    client_id VARCHAR(256) NOT NULL,
+    state TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    CONSTRAINT saml_relay_state_pkey PRIMARY KEY(app_id, tenant_id, relay_state),
+    CONSTRAINT saml_relay_state_app_id_fkey FOREIGN KEY(app_id) REFERENCES apps (app_id) ON DELETE CASCADE,
+    CONSTRAINT saml_relay_state_tenant_id_fkey FOREIGN KEY(app_id, tenant_id) REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS saml_relay_state_app_id_tenant_id_index ON saml_relay_state (app_id, tenant_id);
+CREATE INDEX IF NOT EXISTS saml_relay_state_expires_at_index ON saml_relay_state (expires_at);
+
+CREATE TABLE IF NOT EXISTS saml_claims (
+    app_id VARCHAR(64) NOT NULL DEFAULT 'public',
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'public',
+    client_id VARCHAR(256) NOT NULL,
+    code VARCHAR(256) NOT NULL,
+    claims TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    CONSTRAINT saml_claims_pkey PRIMARY KEY(app_id, tenant_id, code),
+    CONSTRAINT saml_claims_app_id_fkey FOREIGN KEY(app_id) REFERENCES apps (app_id) ON DELETE CASCADE,
+    CONSTRAINT saml_claims_tenant_id_fkey FOREIGN KEY(app_id, tenant_id) REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS saml_claims_app_id_tenant_id_index ON saml_claims (app_id, tenant_id);
+CREATE INDEX IF NOT EXISTS saml_claims_expires_at_index ON saml_claims (expires_at);
+```
+
+## [11.2.1]
+
+- Fixes deadlock issue with `ResourceDistributor`
+- Fixes race issues with Refreshing OAuth token
+
+## [11.2.0]
+
+- Adds opentelemetry-javaagent to the core distribution
+
+## [11.1.1]
+
+- Updates tomcat-embed to 11.0.12 because of security vulnerabilities
+
+## [11.1.0]
+
+- Adds hikari logs to opentelemetry
+- Fetches core and plugin config from env
+- Open Telemetry configuration is now optional
+- Migrates API calls from supertokens.io to supertokens.com
+
+## [11.0.5]
+
+- Adds all logs to telemetry which were logged with `io/supertokens/output/Logging.java`
+- Upgrades the embedded tomcat to 11.0.8 because of security vulnerabilities
+- Adds back previously removed `implementationDependencies.json`, but now it is generated by the build process
+
+## [11.0.4]
+
+- Fixes user to roles association in bulk import users when the user is not a primary user
+
+## [11.0.3]
+
+- Fixes BatchUpdateException checks and error handling to prevent bulk import users stuck in `PROCESSING` state
+- Adds more DEBUG logging to the bulk import users process
+
+## [11.0.2]
+
+- Fixes `AuthRecipe#getUserByAccountInfo` to consider the tenantId instead of the appId when fetching the webauthn user
+
+## [11.0.1]
+
+- Upgrades the embedded tomcat 11.0.6 and logback classic to 1.5.13 because of security vulnerabilities
+
+## [11.0.0]
+
+- Migrates tests to Github Actions
+- Updates JRE to 21.
+
+## [10.1.4]
+
+- Fixes bulk migration user roles association when there is no external userId assigned to the user
+- Bulk migration now actually uses the `isVerified` field's value in the loginMethod input
+- Fixes nullpointer exception in bulk migration error handling in case of null external user id
+
+## [10.1.3]
+
+- Version bumped for re-release
+
+## [10.1.2]
+
+- Adds user_id index to the user roles table
+- Adds more debug logging to bulk migration
+- Adds more tests to bulk migration
+
+### Migration
+
+If using PostgreSQL, run the following SQL script:
+
+```sql
+CREATE INDEX IF NOT EXISTS user_roles_app_id_user_id_index ON user_roles (app_id, user_id);
+```
+
+If using MySQL, run the following SQL script:
+```sql
+CREATE INDEX user_roles_app_id_user_id_index ON user_roles (app_id, user_id);
+```
+
+
+## [10.1.1]
+
+- Adds debug logging for the bulk migration process
+- Bulk migration users upload now returns the ids of the users.
+- Bulk Migration now requires Account Linking to be enabled only if the input data justifies it
+- Speed up Bulk Migration's account linking and primary user making
+
+## [10.1.0]
+
+- Adds Webauthn (Passkeys) support to core
+- Adds APIs:
+  - GET `/recipe/webauthn/user/credential/`
+  - GET `/recipe/webauthn/user/credential/list`
+  - GET `/recipe/webauthn/options`
+  - GET `/recipe/webauthn/user/recover`
+  - POST `/recipe/webauthn/options/register`
+  - POST `/recipe/webauthn/options/signin`
+  - POST `/recipe/webauthn/user/credential/register`
+  - POST `/recipe/webauthn/signup`
+  - POST `/recipe/webauthn/signin`
+  - POST `/recipe/webauthn/user/recover/token`
+  - POST `/recipe/webauthn/user/recover/token/consume`
+  - PUT `/recipe/webauthn/user/email`
+  - DELETE `/recipe/webauthn/user/credential/remove`
+  - DELETE `/recipe/webauthn/options/remove`
+- Adds additional indexing for `emailverification_verified_emails`
+- Introduces `bulk_migration_batch_size` core config
+- Introduces `BULK_MIGRATION_CRON_ENABLED` environment variable to control the bulk migration cron job
+
+### Migration
+
+If using PostgreSQL, run the following SQL script:
+
+```sql
+
+CREATE INDEX IF NOT EXISTS emailverification_verified_emails_app_id_email_index ON emailverification_verified_emails
+(app_id, email);
+
+CREATE TABLE IF NOT EXISTS webauthn_account_recovery_tokens (
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    tenant_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    email VARCHAR(256) NOT NULL,
+    token VARCHAR(256) NOT NULL,
+    expires_at BIGINT NOT NULL,
+    CONSTRAINT webauthn_account_recovery_token_pkey PRIMARY KEY (app_id, tenant_id, user_id, token),
+    CONSTRAINT webauthn_account_recovery_token_user_id_fkey FOREIGN KEY (app_id, tenant_id, user_id) REFERENCES
+    all_auth_recipe_users(app_id, tenant_id, user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id VARCHAR(256) NOT NULL,
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    rp_id VARCHAR(256) NOT NULL,
+    user_id CHAR(36),
+    counter BIGINT NOT NULL,
+    public_key BYTEA NOT NULL,
+    transports TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    CONSTRAINT webauthn_credentials_pkey PRIMARY KEY (app_id, rp_id, id),
+    CONSTRAINT webauthn_credentials_user_id_fkey FOREIGN KEY (app_id, user_id) REFERENCES webauthn_users
+    (app_id, user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_generated_options (
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    tenant_id VARCHAR(64) DEFAULT 'public'NOT NULL,
+    id CHAR(36) NOT NULL,
+    challenge VARCHAR(256) NOT NULL,
+    email VARCHAR(256),
+    rp_id VARCHAR(256) NOT NULL,
+    rp_name VARCHAR(256) NOT NULL,
+    origin VARCHAR(256) NOT NULL,
+    expires_at BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    user_presence_required BOOLEAN DEFAULT false NOT NULL,
+    user_verification VARCHAR(12) DEFAULT 'preferred' NOT NULL,
+    CONSTRAINT webauthn_generated_options_pkey PRIMARY KEY (app_id, tenant_id, id),
+    CONSTRAINT webauthn_generated_options_tenant_id_fkey FOREIGN KEY (app_id, tenant_id) REFERENCES tenants
+    (app_id, tenant_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_user_to_tenant (
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    tenant_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    email VARCHAR(256) NOT NULL,
+    CONSTRAINT webauthn_user_to_tenant_email_key UNIQUE (app_id, tenant_id, email),
+    CONSTRAINT webauthn_user_to_tenant_pkey PRIMARY KEY (app_id, tenant_id, user_id),
+    CONSTRAINT webauthn_user_to_tenant_user_id_fkey FOREIGN KEY (app_id, tenant_id, user_id) REFERENCES
+    all_auth_recipe_users(app_id, tenant_id, user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_users (
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    email VARCHAR(256) NOT NULL,
+    rp_id VARCHAR(256) NOT NULL,
+    time_joined BIGINT NOT NULL,
+    CONSTRAINT webauthn_users_pkey PRIMARY KEY (app_id, user_id),
+    CONSTRAINT webauthn_users_user_id_fkey FOREIGN KEY (app_id, user_id) REFERENCES app_id_to_user_id(app_id,
+    user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS webauthn_user_to_tenant_email_index ON webauthn_user_to_tenant (app_id, email);
+CREATE INDEX IF NOT EXISTS webauthn_user_challenges_expires_at_index ON webauthn_generated_options (app_id, tenant_id, expires_at);
+CREATE INDEX IF NOT EXISTS webauthn_credentials_user_id_index ON webauthn_credentials (user_id);
+CREATE INDEX IF NOT EXISTS webauthn_account_recovery_token_token_index ON webauthn_account_recovery_tokens (app_id, tenant_id, token);
+CREATE INDEX IF NOT EXISTS webauthn_account_recovery_token_expires_at_index ON webauthn_account_recovery_tokens (expires_at DESC);
+CREATE INDEX IF NOT EXISTS webauthn_account_recovery_token_email_index ON webauthn_account_recovery_tokens (app_id, tenant_id, email);
+```
+
+If using MySQL, run the following SQL script:
+
+```sql
+CREATE INDEX emailverification_verified_emails_app_id_email_index ON emailverification_verified_emails
+(app_id, email);
+
+CREATE TABLE IF NOT EXISTS webauthn_account_recovery_tokens (
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    tenant_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    email VARCHAR(256) NOT NULL,
+    token VARCHAR(256) NOT NULL,
+    expires_at BIGINT NOT NULL,
+    CONSTRAINT webauthn_account_recovery_token_pkey PRIMARY KEY (app_id, tenant_id, user_id, token),
+    CONSTRAINT webauthn_account_recovery_token_user_id_fkey FOREIGN KEY (app_id, tenant_id, user_id) REFERENCES
+    all_auth_recipe_users(app_id, tenant_id, user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id VARCHAR(256) NOT NULL,
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    rp_id VARCHAR(256) NOT NULL,
+    user_id CHAR(36),
+    counter BIGINT NOT NULL,
+    public_key BLOB NOT NULL,
+    transports TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    CONSTRAINT webauthn_credentials_pkey PRIMARY KEY (app_id, rp_id, id),
+    CONSTRAINT webauthn_credentials_user_id_fkey FOREIGN KEY (app_id, user_id) REFERENCES webauthn_users
+    (app_id, user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_generated_options (
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    tenant_id VARCHAR(64) DEFAULT 'public'NOT NULL,
+    id CHAR(36) NOT NULL,
+    challenge VARCHAR(256) NOT NULL,
+    email VARCHAR(256),
+    rp_id VARCHAR(256) NOT NULL,
+    rp_name VARCHAR(256) NOT NULL,
+    origin VARCHAR(256) NOT NULL,
+    expires_at BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    user_presence_required BOOLEAN DEFAULT false NOT NULL,
+    user_verification VARCHAR(12) DEFAULT 'preferred' NOT NULL,
+    CONSTRAINT webauthn_generated_options_pkey PRIMARY KEY (app_id, tenant_id, id),
+    CONSTRAINT webauthn_generated_options_tenant_id_fkey FOREIGN KEY (app_id, tenant_id) REFERENCES tenants
+    (app_id, tenant_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_user_to_tenant (
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    tenant_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    email VARCHAR(256) NOT NULL,
+    CONSTRAINT webauthn_user_to_tenant_email_key UNIQUE (app_id, tenant_id, email),
+    CONSTRAINT webauthn_user_to_tenant_pkey PRIMARY KEY (app_id, tenant_id, user_id),
+    CONSTRAINT webauthn_user_to_tenant_user_id_fkey FOREIGN KEY (app_id, tenant_id, user_id) REFERENCES
+    all_auth_recipe_users(app_id, tenant_id, user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_users (
+    app_id VARCHAR(64) DEFAULT 'public' NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    email VARCHAR(256) NOT NULL,
+    rp_id VARCHAR(256) NOT NULL,
+    time_joined BIGINT NOT NULL,
+    CONSTRAINT webauthn_users_pkey PRIMARY KEY (app_id, user_id),
+    CONSTRAINT webauthn_users_user_id_fkey FOREIGN KEY (app_id, user_id) REFERENCES app_id_to_user_id (app_id,
+    user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX webauthn_user_to_tenant_email_index ON webauthn_user_to_tenant (app_id, email);
+CREATE INDEX webauthn_user_challenges_expires_at_index ON webauthn_generated_options (app_id, tenant_id, expires_at);
+CREATE INDEX webauthn_credentials_user_id_index ON webauthn_credentials (user_id);
+CREATE INDEX webauthn_account_recovery_token_token_index ON webauthn_account_recovery_tokens (app_id, tenant_id, token);
+CREATE INDEX webauthn_account_recovery_token_expires_at_index ON webauthn_account_recovery_tokens (expires_at DESC);
+CREATE INDEX webauthn_account_recovery_token_email_index ON webauthn_account_recovery_tokens (app_id, tenant_id, email);
+```
+
+## [10.0.3]
+
+- Fixes `StorageTransactionLogicException` in bulk import when not using userRoles and totpDevices in import json.
+- MFA only required in Bulk Import if it's used in input data
+- Fixes issue with reloading all resources when exception occurs while loading a resource, other valid resources were offloaded from the memory. Now we log the exception and continue loading other resources.
+- Adds `USE_STRUCTURED_LOGGING` environment variable to control the logging format.
+
+## [10.0.2]
+
+- Fixes `NullPointerException` in user search API.
+
+## [10.0.1]
+
+- Fixes slow queries for account linking
+- Masks db password in 500 response
+
+### Migration
+
+If using PostgreSQL, run the following SQL script:
+
+```sql
+CREATE INDEX IF NOT EXISTS emailpassword_users_email_index ON emailpassword_users (app_id, email);
+CREATE INDEX IF NOT EXISTS emailpassword_user_to_tenant_email_index ON emailpassword_user_to_tenant (app_id, tenant_id, email);
+
+CREATE INDEX IF NOT EXISTS passwordless_users_email_index ON passwordless_users (app_id, email);
+CREATE INDEX IF NOT EXISTS passwordless_users_phone_number_index ON passwordless_users (app_id, phone_number);
+CREATE INDEX IF NOT EXISTS passwordless_user_to_tenant_email_index ON passwordless_user_to_tenant (app_id, tenant_id, email);
+CREATE INDEX IF NOT EXISTS passwordless_user_to_tenant_phone_number_index ON passwordless_user_to_tenant (app_id, tenant_id, phone_number);
+
+CREATE INDEX IF NOT EXISTS thirdparty_user_to_tenant_third_party_user_id_index ON thirdparty_user_to_tenant (app_id, tenant_id, third_party_id, third_party_user_id);
+```
+
+If using MySQL, run the following SQL script:
+
+```sql
+CREATE INDEX emailpassword_users_email_index ON emailpassword_users (app_id, email);
+CREATE INDEX emailpassword_user_to_tenant_email_index ON emailpassword_user_to_tenant (app_id, tenant_id, email);
+
+CREATE INDEX passwordless_users_email_index ON passwordless_users (app_id, email);
+CREATE INDEX passwordless_users_phone_number_index ON passwordless_users (app_id, phone_number);
+CREATE INDEX passwordless_user_to_tenant_email_index ON passwordless_user_to_tenant (app_id, tenant_id, email);
+CREATE INDEX passwordless_user_to_tenant_phone_number_index ON passwordless_user_to_tenant (app_id, tenant_id, phone_number);
+
+CREATE INDEX thirdparty_user_to_tenant_third_party_user_id_index ON thirdparty_user_to_tenant (app_id, tenant_id, third_party_id, third_party_user_id);
+```
+
+## [10.0.0]
+
+### Added
+
+- Optimize getUserIdMappingWithEitherSuperTokensUserIdOrExternalUserId query
+- Adds property `bulk_migration_parallelism` for fine-tuning the worker threads number
+- Adds APIs to bulk import users
+  - GET `/bulk-import/users`
+  - POST `/bulk-import/users`
+  - GET `/bulk-import/users/count`
+  - POST `/bulk-import/users/remove`
+  - POST `/bulk-import/users/import`
+- Adds `ProcessBulkImportUsers` cron job to process bulk import users
+- Adds multithreaded worker support for the `ProcessBulkImportUsers` cron job for faster bulk imports
+- Adds support for lazy importing users
+
+### Breaking changes
+
+- Includes CUD in the owner field for OAuth clients
+
+### Fixes
+
+- Fixes issue with user id mapping while refreshing session
+- Adds indexing for `session_info` table on `user_id, app_id` columns
+
+### Migrations
+
+For PostgreSQL, run the following SQL script:
+
+```sql
+CREATE TABLE IF NOT EXISTS bulk_import_users (
+    id CHAR(36),
+    app_id VARCHAR(64) NOT NULL DEFAULT 'public',
+    primary_user_id VARCHAR(36),
+    raw_data TEXT NOT NULL,
+    status VARCHAR(128) DEFAULT 'NEW',
+    error_msg TEXT,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    CONSTRAINT bulk_import_users_pkey PRIMARY KEY(app_id, id),
+    CONSTRAINT bulk_import_users__app_id_fkey FOREIGN KEY(app_id) REFERENCES apps(app_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS bulk_import_users_status_updated_at_index ON bulk_import_users (app_id, status, updated_at);
+
+CREATE INDEX IF NOT EXISTS bulk_import_users_pagination_index1 ON bulk_import_users (app_id, status, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS bulk_import_users_pagination_index2 ON bulk_import_users (app_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS session_info_user_id_app_id_index ON session_info (user_id, app_id);
+```
+
+For MySQL run the following SQL script:
+
+```sql
+CREATE TABLE IF NOT EXISTS bulk_import_users (
+    id CHAR(36),
+    app_id VARCHAR(64) NOT NULL DEFAULT 'public',
+    primary_user_id VARCHAR(36),
+    raw_data TEXT NOT NULL,
+    status VARCHAR(128) DEFAULT 'NEW',
+    error_msg TEXT,
+    created_at BIGINT UNSIGNED NOT NULL,
+    updated_at BIGINT UNSIGNED NOT NULL,
+    PRIMARY KEY (app_id, id),
+    FOREIGN KEY(app_id) REFERENCES apps(app_id) ON DELETE CASCADE
+);
+
+CREATE INDEX bulk_import_users_status_updated_at_index ON bulk_import_users (app_id, status, updated_at);
+
+CREATE INDEX bulk_import_users_pagination_index1 ON bulk_import_users (app_id, status, created_at DESC, id DESC);
+
+CREATE INDEX bulk_import_users_pagination_index2 ON bulk_import_users (app_id, created_at DESC, id DESC);
+
+CREATE INDEX session_info_user_id_app_id_index ON session_info (user_id, app_id);
+```
+
+## [9.3.1]
+
+- Includes exception class name in 500 error message
+
+
+## [9.3.0]
+
+### Changes
+
+- Adds support for OAuth2
+    - Added new feature in license key: `OAUTH`
+    - Adds new core config:
+        - `oauth_provider_public_service_url`
+        - `oauth_provider_admin_service_url`
+        - `oauth_provider_consent_login_base_url`
+        - `oauth_provider_url_configured_in_oauth_provider`
+    - Adds following APIs:
+        - POST `/recipe/oauth/clients`
+        - PUT `/recipe/oauth/clients`
+        - GET `/recipe/oauth/clients`
+        - GET `/recipe/oauth/clients/list`
+        - POST `/recipe/oauth/clients/remove`
+        - GET `/recipe/oauth/auth/requests/consent`
+        - PUT `/recipe/oauth/auth/requests/consent/accept`
+        - PUT `/recipe/oauth/auth/requests/consent/reject`
+        - GET `/recipe/oauth/auth/requests/login`
+        - PUT `/recipe/oauth/auth/requests/login/accept`
+        - PUT `/recipe/oauth/auth/requests/login/reject`
+        - GET `/recipe/oauth/auth/requests/logout`
+        - PUT `/recipe/oauth/auth/requests/logout/accept`
+        - PUT `/recipe/oauth/auth/requests/logout/reject`
+        - POST `/recipe/oauth/auth`
+        - POST `/recipe/oauth/token`
+        - POST `/recipe/oauth/introspect`
+        - POST `/recipe/oauth/session/revoke`
+        - POST `/recipe/oauth/token/revoke`
+        - POST `/recipe/oauth/tokens/revoke`
+
+### Migration
+
+If using PostgreSQL, run the following SQL script:
+
+```sql
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    app_id VARCHAR(64),
+    client_id VARCHAR(255) NOT NULL,
+    is_client_credentials_only BOOLEAN NOT NULL,
+    PRIMARY KEY (app_id, client_id),
+    FOREIGN KEY(app_id) REFERENCES apps(app_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS oauth_sessions (
+    gid VARCHAR(255),
+    app_id VARCHAR(64) DEFAULT 'public',
+    client_id VARCHAR(255) NOT NULL,
+    session_handle VARCHAR(128),
+    external_refresh_token VARCHAR(255) UNIQUE,
+    internal_refresh_token VARCHAR(255) UNIQUE,
+    jti TEXT NOT NULL,
+    exp BIGINT NOT NULL,
+    PRIMARY KEY (gid),
+    FOREIGN KEY(app_id, client_id) REFERENCES oauth_clients(app_id, client_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS oauth_session_exp_index ON oauth_sessions(exp DESC);
+CREATE INDEX IF NOT EXISTS oauth_session_external_refresh_token_index ON oauth_sessions(app_id, external_refresh_token DESC);
+
+CREATE TABLE IF NOT EXISTS oauth_m2m_tokens (
+    app_id VARCHAR(64) DEFAULT 'public',
+    client_id VARCHAR(255) NOT NULL,
+    iat BIGINT NOT NULL,
+    exp BIGINT NOT NULL,
+    PRIMARY KEY (app_id, client_id, iat),
+    FOREIGN KEY(app_id, client_id) REFERENCES oauth_clients(app_id, client_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS oauth_m2m_token_iat_index ON oauth_m2m_tokens(iat DESC, app_id DESC);
+CREATE INDEX IF NOT EXISTS oauth_m2m_token_exp_index ON oauth_m2m_tokens(exp DESC);
+
+CREATE TABLE IF NOT EXISTS oauth_logout_challenges (
+    app_id VARCHAR(64) DEFAULT 'public',
+    challenge VARCHAR(128) NOT NULL,
+    client_id VARCHAR(255) NOT NULL,
+    post_logout_redirect_uri VARCHAR(1024),
+    session_handle VARCHAR(128),
+    state VARCHAR(128),
+    time_created BIGINT NOT NULL,
+    PRIMARY KEY (app_id, challenge),
+    FOREIGN KEY(app_id, client_id) REFERENCES oauth_clients(app_id, client_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS oauth_logout_challenges_time_created_index ON oauth_logout_challenges(time_created DESC);
+```
+
+If using MySQL, run the following SQL script:
+
+```sql
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  app_id VARCHAR(64),
+  client_id VARCHAR(255) NOT NULL,
+  is_client_credentials_only BOOLEAN NOT NULL,
+  PRIMARY KEY (app_id, client_id),
+  FOREIGN KEY(app_id) REFERENCES apps(app_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS oauth_sessions (
+  gid VARCHAR(255),
+  app_id VARCHAR(64) DEFAULT 'public',
+  client_id VARCHAR(255) NOT NULL,
+  session_handle VARCHAR(128),
+  external_refresh_token VARCHAR(255) UNIQUE,
+  internal_refresh_token VARCHAR(255) UNIQUE,
+  jti TEXT NOT NULL,
+  exp BIGINT NOT NULL,
+  PRIMARY KEY (gid),
+  FOREIGN KEY(app_id, client_id) REFERENCES oauth_clients(app_id, client_id) ON DELETE CASCADE
+);
+
+CREATE INDEX oauth_session_exp_index ON oauth_sessions(exp DESC);
+CREATE INDEX oauth_session_external_refresh_token_index ON oauth_sessions(app_id, external_refresh_token DESC);
+
+CREATE TABLE oauth_m2m_tokens (
+  app_id VARCHAR(64) DEFAULT 'public',
+  client_id VARCHAR(255) NOT NULL,
+  iat BIGINT UNSIGNED NOT NULL,
+  exp BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (app_id, client_id, iat),
+  FOREIGN KEY(app_id, client_id) REFERENCES oauth_clients(app_id, client_id) ON DELETE CASCADE
+);
+
+CREATE INDEX oauth_m2m_token_iat_index ON oauth_m2m_tokens(iat DESC, app_id DESC);
+CREATE INDEX oauth_m2m_token_exp_index ON oauth_m2m_tokens(exp DESC);
+
+CREATE TABLE IF NOT EXISTS oauth_logout_challenges (
+  app_id VARCHAR(64) DEFAULT 'public',
+  challenge VARCHAR(128) NOT NULL,
+  client_id VARCHAR(255) NOT NULL,
+  post_logout_redirect_uri VARCHAR(1024),
+  session_handle VARCHAR(128),
+  state VARCHAR(128),
+  time_created BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (app_id, challenge),
+  FOREIGN KEY(app_id, client_id) REFERENCES oauth_clients(app_id, client_id) ON DELETE CASCADE
+);
+
+CREATE INDEX oauth_logout_challenges_time_created_index ON oauth_logout_challenges(time_created ASC, app_id ASC);
+```
+
+## [9.2.3] - 2024-10-09
+
+- Adds support for `--with-temp-dir` in CLI and `tempDirLocation=` in Core
+- Adds validation to firstFactors and requiredSecondaryFactors names while creating tenants/apps/etc. to not allow
+  special chars.
+
+## [9.2.2] - 2024-09-04
+
+- Adds index on `last_active_time` for `user_last_active` table to improve the performance of MAU computation.
+
+### Migration
+
+If using PostgreSQL, run the following SQL script:
+
+```sql
+CREATE INDEX IF NOT EXISTS user_last_active_last_active_time_index ON user_last_active (last_active_time DESC, app_id DESC);
+```
+
+If using MySQL, run the following SQL script:
+
+```sql
+CREATE INDEX user_last_active_last_active_time_index ON user_last_active (last_active_time DESC, app_id DESC);
+```
+
+## [9.2.1] - 2024-09-02
+
+- Removes the stats that were resulting in high CPU consumption
+
+## [9.2.0] - 2024-08-20
+
+- Adds `SECURITY` feature in `EE_FEATURES`.
+
+## [9.1.2] - 2024-07-24
+
+- Fixes path routing which rejected tenantId stop words even if it was not an exact stop word match. For example, `/hellotenant` is a valid tenantId prefix, however, it was being rejected for the stop word `hello`. - https://github.com/supertokens/supertokens-core/issues/1021
+- 500 errors in core returns actual exception, since these APIs are developer facing, it makes easier to debug these errors.
+
+## [9.1.1] - 2024-07-24
+
+### Fixes
+
+- Account linking now properly checks if the login methods of the primary user can be shared with the tenants of the
+  recipe user we are trying to link
+- Simplifying email verification token creation
+
+## [9.1.0] - 2024-05-24
+
+### Changes
+
+- Adds support for CDI 3.1 and 5.1
+- Adds annotations to properties `CoreConfig` to aid dashboard API.
+- Updates `ApiVersionAPI` to optionally accept `websiteDomain` and `apiDomain` for telemetry.
+- Adds GET `/recipe/dashboard/tenant/core-config` to fetch the core properties with metadata for dashboard.
+- Reports `websiteDomain` and `apiDomain` for each app in telemetry.
+- API Key can now be passed using the `Authorization` header: `Authorization: <api-key>`
+
+### Breaking changes
+
+- CUD/App/Tenant Management APIs are deprecated and v2 versions have been added
+  - Adds new core API for fetching all the core properties for a tenant
+      - GET `/appid-<appid>/<tenantid>/recipe/dashboard/tenant/core-config`
+  - Deprecated the following APIs
+      - PUT `/recipe/multitenancy/connectionuridomain`
+      - GET `/recipe/multitenancy/connectionuridomain/list`
+      - PUT `/recipe/multitenancy/app`
+      - GET `/recipe/multitenancy/app/list`
+      - PUT `/appid-<appid>/recipe/multitenancy/tenant`
+      - GET `/appid-<appid>/<tenantid>/recipe/multitenancy/tenant`
+      - GET `/appid-<appid>/<tenantid>/recipe/multitenancy/tenant/list`
+  - Adds the following APIs to replace the deprecated APIs
+      - PUT `/recipe/multitenancy/connectionuridomain/v2`
+      - GET `/recipe/multitenancy/connectionuridomain/list/v2`
+      - PUT `/recipe/multitenancy/app/v2`
+      - GET `/recipe/multitenancy/app/list/v2`
+      - PUT `/appid-<appid>/recipe/multitenancy/tenant/v2`
+      - GET `/appid-<appid>/<tenantid>/recipe/multitenancy/tenant/v2`
+      - GET `/appid-<appid>/<tenantid>/recipe/multitenancy/tenant/list/v2`
+
+- In CDI 5.1, the auth recipe APIs such as emailpassword signIn, thirdParty signInUp, etc would not be blocked if the recipe was disabled using the deprecated APIs. They will be enforced if CDI version <= 5.0 is being passed in the header.
+
+### Fixes
+
+- Updates descriptions in the config.yaml to be consistent with the annotations.
+- Adds correct `max-age` for `JWKSPublicAPI` based on dynamic key generation interval.
+- Fixes `500` error when using TOTP code longer than 8 characters.
+
+### Migration
+
+Make sure the core is already upgraded to version 9.0.2 before migrating
+
+If using PostgreSQL
+
+```sql
+ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS is_first_factors_null BOOLEAN DEFAULT TRUE;
+ALTER TABLE tenant_configs ALTER COLUMN is_first_factors_null DROP DEFAULT;
+```
+
+If using MySQL
+
+```sql
+ALTER TABLE tenant_configs ADD COLUMN is_first_factors_null BOOLEAN DEFAULT TRUE;
+ALTER TABLE tenant_configs ALTER COLUMN is_first_factors_null DROP DEFAULT;
+```
+
 ## [9.0.2] - 2024-04-17
 
 - Fixes issue with core startup when creation of CUD/app/tenant has partial failure
@@ -30,20 +1058,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Tenant APIs
 - Adds `deviceName` in the response of `CreateOrUpdateTotpDeviceAPI` `POST`
 - `VerifyTOTPAPI` changes
-  - Removes `allowUnverifiedDevices` from request body and unverified devices are not allowed
-  - Adds `currentNumberOfFailedAttempts` and `maxNumberOfFailedAttempts` in response when status is 
-    `INVALID_TOTP_ERROR` or `LIMIT_REACHED_ERROR`
-  - Adds status `UNKNOWN_USER_ID_ERROR`
+    - Removes `allowUnverifiedDevices` from request body and unverified devices are not allowed
+    - Adds `currentNumberOfFailedAttempts` and `maxNumberOfFailedAttempts` in response when status is
+      `INVALID_TOTP_ERROR` or `LIMIT_REACHED_ERROR`
+    - Adds status `UNKNOWN_USER_ID_ERROR`
 - `VerifyTotpDeviceAPI` changes
-  - Adds `currentNumberOfFailedAttempts` and `maxNumberOfFailedAttempts` in response when status is
-    `INVALID_TOTP_ERROR` or `LIMIT_REACHED_ERROR`
+    - Adds `currentNumberOfFailedAttempts` and `maxNumberOfFailedAttempts` in response when status is
+      `INVALID_TOTP_ERROR` or `LIMIT_REACHED_ERROR`
 - Adds `consumedDevice` in the success response of the `ConsumeCodeAPI`
 - Adds `preAuthSessionId` input to `DeleteCodeAPI` to be able to delete codes for a device
 - Adds a new `useDynamicSigningKey` into the request body of `RefreshSessionAPI`
-  - This enables smooth switching between `useDynamicAccessTokenSigningKey` settings by allowing refresh calls to change the signing key type of a session
-  - This is available after CDI3.0
-  - This is required in&after CDI5.0 and optional before
-- Adds optional `firstFactors` and `requiredSecondaryFactors` to the create or update connectionUriDomain, app and tenant APIs
+    - This enables smooth switching between `useDynamicAccessTokenSigningKey` settings by allowing refresh calls to
+      change the signing key type of a session
+    - This is available after CDI3.0
+    - This is required in&after CDI5.0 and optional before
+- Adds optional `firstFactors` and `requiredSecondaryFactors` to the create or update connectionUriDomain, app and
+  tenant APIs
 - Updates Last active while linking accounts
 - Marks fake email in email password sign up as verified
 - Fixes slow down in useridmapping queries
@@ -58,17 +1088,19 @@ Make sure the core is already upgraded to version 8.0.0 before migrating
 If using PostgreSQL
 
 ```sql
-ALTER TABLE totp_user_devices ADD COLUMN IF NOT EXISTS created_at BIGINT default 0;
-ALTER TABLE totp_user_devices 
-  ALTER COLUMN created_at DROP DEFAULT;
+ALTER TABLE totp_user_devices
+    ADD COLUMN IF NOT EXISTS created_at BIGINT default 0;
+ALTER TABLE totp_user_devices
+    ALTER COLUMN created_at DROP DEFAULT;
 ```
 
 If using MySQL
 
 ```sql
-ALTER TABLE totp_user_devices ADD COLUMN created_at BIGINT UNSIGNED default 0;
-ALTER TABLE totp_user_devices 
-  ALTER COLUMN created_at DROP DEFAULT;
+ALTER TABLE totp_user_devices
+    ADD COLUMN created_at BIGINT UNSIGNED default 0;
+ALTER TABLE totp_user_devices
+    ALTER COLUMN created_at DROP DEFAULT;
 DROP INDEX all_auth_recipe_users_pagination_index2 ON all_auth_recipe_users;
 DROP INDEX all_auth_recipe_users_pagination_index4 ON all_auth_recipe_users;
 ```
@@ -81,23 +1113,26 @@ DROP INDEX all_auth_recipe_users_pagination_index4 ON all_auth_recipe_users;
 
 ### Breaking changes
 
-- The following app specific APIs return a 403 when they are called with a tenant ID other than the `public` one. For example, if the path is `/users/count/active`,  and you call it with `/tenant1/users/count/active`, it will return a 403. But if you call it with `/public/users/count/active`, or just `/users/count/active`, it will work.
-  - GET `/recipe/accountlinking/user/primary/check`
-  - GET `/recipe/accountlinking/user/link/check`
-  - POST `/recipe/accountlinking/user/primary`
-  - POST `/recipe/accountlinking/user/link`
-  - POST `/recipe/accountlinking/user/unlink`
-  - GET `/users/count/active`
-  - POST `/user/remove`
-  - GET `/ee/featureflag`
-  - GET `/user/id`
-  - PUT `/ee/license`
-  - DELETE `/ee/license`
-  - GET `/ee/license`
-  - GET `/requests/stats`
-  - GET `/recipe/user` when querying by `userId`
-  - GET `/recipe/jwt/jwks`
-  - POST `/recipe/jwt`
+- The following app specific APIs return a 403 when they are called with a tenant ID other than the `public` one. For
+  example, if the path is `/users/count/active`, and you call it with `/tenant1/users/count/active`, it will return a
+    403. But if you call it with `/public/users/count/active`, or just `/users/count/active`, it will work.
+
+    - GET `/recipe/accountlinking/user/primary/check`
+    - GET `/recipe/accountlinking/user/link/check`
+    - POST `/recipe/accountlinking/user/primary`
+    - POST `/recipe/accountlinking/user/link`
+    - POST `/recipe/accountlinking/user/unlink`
+    - GET `/users/count/active`
+    - POST `/user/remove`
+    - GET `/ee/featureflag`
+    - GET `/user/id`
+    - PUT `/ee/license`
+    - DELETE `/ee/license`
+    - GET `/ee/license`
+    - GET `/requests/stats`
+    - GET `/recipe/user` when querying by `userId`
+    - GET `/recipe/jwt/jwks`
+    - POST `/recipe/jwt`
 
 ### Fixes
 
@@ -106,17 +1141,19 @@ DROP INDEX all_auth_recipe_users_pagination_index4 ON all_auth_recipe_users;
 ### Migration
 
 For Postgresql:
+
 ```sql
 ALTER TABLE user_roles DROP CONSTRAINT IF EXISTS user_roles_role_fkey;
 ```
 
 For MySQL:
+
 ```sql
 ALTER TABLE user_roles DROP FOREIGN KEY user_roles_ibfk_1;
 ALTER TABLE user_roles DROP FOREIGN KEY user_roles_ibfk_2;
 ALTER TABLE user_roles
-  ADD FOREIGN KEY (app_id, tenant_id)
-    REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
+    ADD FOREIGN KEY (app_id, tenant_id)
+        REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
 ```
 
 ## [7.0.18] - 2024-02-19
@@ -128,7 +1165,8 @@ ALTER TABLE user_roles
 ## [7.0.17] - 2024-02-06
 
 - Fixes issue where error logs were printed to StdOut instead of StdErr.
-- Adds new config `supertokens_saas_load_only_cud` that makes the core instance load a particular CUD only, irrespective of the CUDs present in the db.
+- Adds new config `supertokens_saas_load_only_cud` that makes the core instance load a particular CUD only, irrespective
+  of the CUDs present in the db.
 - Fixes connection pool handling when connection pool size changes for a tenant.
 
 ## [7.0.16] - 2023-12-04
@@ -166,19 +1204,26 @@ CREATE INDEX IF NOT EXISTS app_id_to_user_id_primary_user_id_index ON app_id_to_
 
 ## [7.0.12] - 2023-11-16
 
-In this release, the core API routes have been updated to incorporate phone number normalization before processing. Consequently, existing entries in the database also need to undergo normalization. To facilitate this, we have included a migration script to normalize phone numbers for all the existing entries.
+In this release, the core API routes have been updated to incorporate phone number normalization before processing.
+Consequently, existing entries in the database also need to undergo normalization. To facilitate this, we have included
+a migration script to normalize phone numbers for all the existing entries.
 
 **NOTE**: You can skip the migration if you are not using passwordless via phone number.
 
 ### Migration steps
 
-This script updates the `phone_number` column in the `passwordless_users`, `passwordless_user_to_tenant`, and `passwordless_devices` tables with their respective normalized values. This script is idempotent and can be run multiple times without any issue. Follow the steps below to run the script: 
+This script updates the `phone_number` column in the `passwordless_users`, `passwordless_user_to_tenant`,
+and `passwordless_devices` tables with their respective normalized values. This script is idempotent and can be run
+multiple times without any issue. Follow the steps below to run the script:
 
 1. Ensure that the core is already upgraded to version 7.0.12 (CDI version 4.0)
 2. Run the migration script
 
-    Make sure your Node.js version is 16 or above to run the script. Locate the migration script at `supertokens-core/migration_scripts/to_version_7_0_12/index.js`. Modify the script by updating the `DB_HOST`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables with the correct values. Subsequently, run the following commands to initiate the script:
-    
+   Make sure your Node.js version is 16 or above to run the script. Locate the migration script
+   at `supertokens-core/migration_scripts/to_version_7_0_12/index.js`. Modify the script by updating
+   the `DB_HOST`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables with the correct values. Subsequently, run the
+   following commands to initiate the script:
+
     ```bash
        $ git clone https://github.com/supertokens/supertokens-core.git
        $ cd supertokens-core/migration_scripts/to_version_7_0_12
@@ -186,7 +1231,9 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
        $ npm start
     ```
 
-    Performance Note: On average, the script takes 19s for every 1000 rows with a maximum of 1 connection, 4.7s with a maximum of 5 connections (default), and 4.5s with a maximum of 10 connections. Increasing the `MAX_POOL_SIZE` allows the script to leverage more connections simultaneously, potentially improving execution speed.
+   Performance Note: On average, the script takes 19s for every 1000 rows with a maximum of 1 connection, 4.7s with a
+   maximum of 5 connections (default), and 4.5s with a maximum of 10 connections. Increasing the `MAX_POOL_SIZE` allows
+   the script to leverage more connections simultaneously, potentially improving execution speed.
 
 ## [7.0.11] - 2023-11-10
 
@@ -232,7 +1279,8 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
 
 ## [7.0.1] - 2023-10-04
 
-- Remove padding from link codes and pre-auth session ids in passwordless, but keep support for old format that included padding (`=` signs)
+- Remove padding from link codes and pre-auth session ids in passwordless, but keep support for old format that included
+  padding (`=` signs)
 
 ## [7.0.0] - 2023-09-19
 
@@ -241,17 +1289,19 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
 
 ### Session recipe changes
 
-- New access token version: v5, which contains a required prop: `rsub`. This contains the recipe user ID that belongs to the login method that the user used to login. The `sub` claim in the access token payload is now the primary user ID.
+- New access token version: v5, which contains a required prop: `rsub`. This contains the recipe user ID that belongs to
+  the login method that the user used to login. The `sub` claim in the access token payload is now the primary user ID.
 - APIs that return `SessionInformation` (like GET `/recipe/session`) contains userId, recipeUserId in the response.
 - Apis that create / modify / refresh a session return the `recipeUserId` in the `session` object in the response.
 - Token theft detected response returns userId and recipeUserId
 
 ### Db Schema changes
 
-- Adds columns `primary_or_recipe_user_id`, `is_linked_or_is_a_primary_user` and `primary_or_recipe_user_time_joined` to `all_auth_recipe_users` table
+- Adds columns `primary_or_recipe_user_id`, `is_linked_or_is_a_primary_user` and `primary_or_recipe_user_time_joined`
+  to `all_auth_recipe_users` table
 - Adds columns `primary_or_recipe_user_id` and `is_linked_or_is_a_primary_user` to `app_id_to_user_id` table
-- Removes index `all_auth_recipe_users_pagination_index` and addes `all_auth_recipe_users_pagination_index1`, 
-  `all_auth_recipe_users_pagination_index2`, `all_auth_recipe_users_pagination_index3` and 
+- Removes index `all_auth_recipe_users_pagination_index` and addes `all_auth_recipe_users_pagination_index1`,
+  `all_auth_recipe_users_pagination_index2`, `all_auth_recipe_users_pagination_index3` and
   `all_auth_recipe_users_pagination_index4` indexes instead on `all_auth_recipe_users` table
 - Adds `all_auth_recipe_users_recipe_id_index` on `all_auth_recipe_users` table
 - Adds `all_auth_recipe_users_primary_user_id_index` on `all_auth_recipe_users` table
@@ -402,7 +1452,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
 
     CREATE INDEX all_auth_recipe_users_recipe_id_index ON all_auth_recipe_users (app_id, recipe_id, tenant_id);
 
-    ALTER TABLE emailpassword_pswd_reset_tokens 
+    ALTER TABLE emailpassword_pswd_reset_tokens
       DROP FOREIGN KEY emailpassword_pswd_reset_tokens_ibfk_1;
 
     ALTER TABLE emailpassword_pswd_reset_tokens
@@ -434,7 +1484,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
 
 ## [6.0.9] - 2023-08-14
 
-- Now using decimal notation to add numbers into the access token payload (instead of scientific notation) 
+- Now using decimal notation to add numbers into the access token payload (instead of scientific notation)
 
 ## [6.0.8] - 2023-08-01
 
@@ -543,7 +1593,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       CONSTRAINT apps_pkey PRIMARY KEY(app_id)
     );
 
-    INSERT INTO apps (app_id, created_at_time) 
+    INSERT INTO apps (app_id, created_at_time)
       VALUES ('public', 0) ON CONFLICT DO NOTHING;
 
     ------------------------------------------------------------
@@ -558,7 +1608,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
         REFERENCES apps (app_id) ON DELETE CASCADE
     );
 
-    INSERT INTO tenants (app_id, tenant_id, created_at_time) 
+    INSERT INTO tenants (app_id, tenant_id, created_at_time)
       VALUES ('public', 'public', 0) ON CONFLICT DO NOTHING;
 
     CREATE INDEX IF NOT EXISTS tenants_app_id_index ON tenants (app_id);
@@ -573,14 +1623,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT key_value_pkey;
 
     ALTER TABLE key_value
-      ADD CONSTRAINT key_value_pkey 
+      ADD CONSTRAINT key_value_pkey
         PRIMARY KEY (app_id, tenant_id, name);
 
     ALTER TABLE key_value
       DROP CONSTRAINT IF EXISTS key_value_tenant_id_fkey;
 
     ALTER TABLE key_value
-      ADD CONSTRAINT key_value_tenant_id_fkey 
+      ADD CONSTRAINT key_value_tenant_id_fkey
         FOREIGN KEY (app_id, tenant_id)
         REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
 
@@ -598,7 +1648,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
         FOREIGN KEY(app_id) REFERENCES apps (app_id) ON DELETE CASCADE
     );
 
-    INSERT INTO app_id_to_user_id (user_id, recipe_id) 
+    INSERT INTO app_id_to_user_id (user_id, recipe_id)
       SELECT user_id, recipe_id
       FROM all_auth_recipe_users ON CONFLICT DO NOTHING;
 
@@ -614,14 +1664,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT all_auth_recipe_users_pkey CASCADE;
 
     ALTER TABLE all_auth_recipe_users
-      ADD CONSTRAINT all_auth_recipe_users_pkey 
+      ADD CONSTRAINT all_auth_recipe_users_pkey
         PRIMARY KEY (app_id, tenant_id, user_id);
 
     ALTER TABLE all_auth_recipe_users
       DROP CONSTRAINT IF EXISTS all_auth_recipe_users_tenant_id_fkey;
 
     ALTER TABLE all_auth_recipe_users
-      ADD CONSTRAINT all_auth_recipe_users_tenant_id_fkey 
+      ADD CONSTRAINT all_auth_recipe_users_tenant_id_fkey
         FOREIGN KEY (app_id, tenant_id)
         REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
 
@@ -629,7 +1679,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS all_auth_recipe_users_user_id_fkey;
 
     ALTER TABLE all_auth_recipe_users
-      ADD CONSTRAINT all_auth_recipe_users_user_id_fkey 
+      ADD CONSTRAINT all_auth_recipe_users_user_id_fkey
         FOREIGN KEY (app_id, user_id)
         REFERENCES app_id_to_user_id (app_id, user_id) ON DELETE CASCADE;
 
@@ -720,14 +1770,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT session_info_pkey CASCADE;
 
     ALTER TABLE session_info
-      ADD CONSTRAINT session_info_pkey 
+      ADD CONSTRAINT session_info_pkey
         PRIMARY KEY (app_id, tenant_id, session_handle);
 
     ALTER TABLE session_info
       DROP CONSTRAINT IF EXISTS session_info_tenant_id_fkey;
 
     ALTER TABLE session_info
-      ADD CONSTRAINT session_info_tenant_id_fkey 
+      ADD CONSTRAINT session_info_tenant_id_fkey
         FOREIGN KEY (app_id, tenant_id)
         REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
 
@@ -744,14 +1794,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT session_access_token_signing_keys_pkey CASCADE;
 
     ALTER TABLE session_access_token_signing_keys
-      ADD CONSTRAINT session_access_token_signing_keys_pkey 
+      ADD CONSTRAINT session_access_token_signing_keys_pkey
         PRIMARY KEY (app_id, created_at_time);
 
     ALTER TABLE session_access_token_signing_keys
       DROP CONSTRAINT IF EXISTS session_access_token_signing_keys_app_id_fkey;
 
     ALTER TABLE session_access_token_signing_keys
-      ADD CONSTRAINT session_access_token_signing_keys_app_id_fkey 
+      ADD CONSTRAINT session_access_token_signing_keys_app_id_fkey
         FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
@@ -766,14 +1816,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT jwt_signing_keys_pkey CASCADE;
 
     ALTER TABLE jwt_signing_keys
-      ADD CONSTRAINT jwt_signing_keys_pkey 
+      ADD CONSTRAINT jwt_signing_keys_pkey
         PRIMARY KEY (app_id, key_id);
 
     ALTER TABLE jwt_signing_keys
       DROP CONSTRAINT IF EXISTS jwt_signing_keys_app_id_fkey;
 
     ALTER TABLE jwt_signing_keys
-      ADD CONSTRAINT jwt_signing_keys_app_id_fkey 
+      ADD CONSTRAINT jwt_signing_keys_app_id_fkey
         FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
@@ -788,14 +1838,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT emailverification_verified_emails_pkey CASCADE;
 
     ALTER TABLE emailverification_verified_emails
-      ADD CONSTRAINT emailverification_verified_emails_pkey 
+      ADD CONSTRAINT emailverification_verified_emails_pkey
         PRIMARY KEY (app_id, user_id, email);
 
     ALTER TABLE emailverification_verified_emails
       DROP CONSTRAINT IF EXISTS emailverification_verified_emails_app_id_fkey;
 
     ALTER TABLE emailverification_verified_emails
-      ADD CONSTRAINT emailverification_verified_emails_app_id_fkey 
+      ADD CONSTRAINT emailverification_verified_emails_app_id_fkey
         FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
@@ -811,14 +1861,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT emailverification_tokens_pkey CASCADE;
 
     ALTER TABLE emailverification_tokens
-      ADD CONSTRAINT emailverification_tokens_pkey 
+      ADD CONSTRAINT emailverification_tokens_pkey
         PRIMARY KEY (app_id, tenant_id, user_id, email, token);
 
     ALTER TABLE emailverification_tokens
       DROP CONSTRAINT IF EXISTS emailverification_tokens_tenant_id_fkey;
 
     ALTER TABLE emailverification_tokens
-      ADD CONSTRAINT emailverification_tokens_tenant_id_fkey 
+      ADD CONSTRAINT emailverification_tokens_tenant_id_fkey
         FOREIGN KEY (app_id, tenant_id)
         REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
 
@@ -836,14 +1886,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS emailpassword_users_email_key CASCADE;
 
     ALTER TABLE emailpassword_users
-      ADD CONSTRAINT emailpassword_users_pkey 
+      ADD CONSTRAINT emailpassword_users_pkey
         PRIMARY KEY (app_id, user_id);
 
     ALTER TABLE emailpassword_users
       DROP CONSTRAINT IF EXISTS emailpassword_users_user_id_fkey;
 
     ALTER TABLE emailpassword_users
-      ADD CONSTRAINT emailpassword_users_user_id_fkey 
+      ADD CONSTRAINT emailpassword_users_user_id_fkey
         FOREIGN KEY (app_id, user_id)
         REFERENCES app_id_to_user_id (app_id, user_id) ON DELETE CASCADE;
 
@@ -890,14 +1940,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT emailpassword_pswd_reset_tokens_pkey CASCADE;
 
     ALTER TABLE emailpassword_pswd_reset_tokens
-      ADD CONSTRAINT emailpassword_pswd_reset_tokens_pkey 
+      ADD CONSTRAINT emailpassword_pswd_reset_tokens_pkey
         PRIMARY KEY (app_id, user_id, token);
 
     ALTER TABLE emailpassword_pswd_reset_tokens
       DROP CONSTRAINT IF EXISTS emailpassword_pswd_reset_tokens_user_id_fkey;
 
     ALTER TABLE emailpassword_pswd_reset_tokens
-      ADD CONSTRAINT emailpassword_pswd_reset_tokens_user_id_fkey 
+      ADD CONSTRAINT emailpassword_pswd_reset_tokens_user_id_fkey
         FOREIGN KEY (app_id, user_id)
         REFERENCES emailpassword_users (app_id, user_id) ON DELETE CASCADE;
 
@@ -912,7 +1962,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT passwordless_users_pkey CASCADE;
 
     ALTER TABLE passwordless_users
-      ADD CONSTRAINT passwordless_users_pkey 
+      ADD CONSTRAINT passwordless_users_pkey
         PRIMARY KEY (app_id, user_id);
 
     ALTER TABLE passwordless_users
@@ -925,7 +1975,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS passwordless_users_user_id_fkey;
 
     ALTER TABLE passwordless_users
-      ADD CONSTRAINT passwordless_users_user_id_fkey 
+      ADD CONSTRAINT passwordless_users_user_id_fkey
         FOREIGN KEY (app_id, user_id)
         REFERENCES app_id_to_user_id (app_id, user_id) ON DELETE CASCADE;
 
@@ -969,14 +2019,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT passwordless_devices_pkey CASCADE;
 
     ALTER TABLE passwordless_devices
-      ADD CONSTRAINT passwordless_devices_pkey 
+      ADD CONSTRAINT passwordless_devices_pkey
         PRIMARY KEY (app_id, tenant_id, device_id_hash);
 
     ALTER TABLE passwordless_devices
       DROP CONSTRAINT IF EXISTS passwordless_devices_tenant_id_fkey;
 
     ALTER TABLE passwordless_devices
-      ADD CONSTRAINT passwordless_devices_tenant_id_fkey 
+      ADD CONSTRAINT passwordless_devices_tenant_id_fkey
         FOREIGN KEY (app_id, tenant_id)
         REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
 
@@ -1000,14 +2050,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT passwordless_codes_pkey CASCADE;
 
     ALTER TABLE passwordless_codes
-      ADD CONSTRAINT passwordless_codes_pkey 
+      ADD CONSTRAINT passwordless_codes_pkey
         PRIMARY KEY (app_id, tenant_id, code_id);
 
     ALTER TABLE passwordless_codes
       DROP CONSTRAINT IF EXISTS passwordless_codes_device_id_hash_fkey;
 
     ALTER TABLE passwordless_codes
-      ADD CONSTRAINT passwordless_codes_device_id_hash_fkey 
+      ADD CONSTRAINT passwordless_codes_device_id_hash_fkey
         FOREIGN KEY (app_id, tenant_id, device_id_hash)
         REFERENCES passwordless_devices (app_id, tenant_id, device_id_hash) ON DELETE CASCADE;
 
@@ -1040,14 +2090,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS thirdparty_users_user_id_key CASCADE;
 
     ALTER TABLE thirdparty_users
-      ADD CONSTRAINT thirdparty_users_pkey 
+      ADD CONSTRAINT thirdparty_users_pkey
         PRIMARY KEY (app_id, user_id);
 
     ALTER TABLE thirdparty_users
       DROP CONSTRAINT IF EXISTS thirdparty_users_user_id_fkey;
 
     ALTER TABLE thirdparty_users
-      ADD CONSTRAINT thirdparty_users_user_id_fkey 
+      ADD CONSTRAINT thirdparty_users_user_id_fkey
         FOREIGN KEY (app_id, user_id)
         REFERENCES app_id_to_user_id (app_id, user_id) ON DELETE CASCADE;
 
@@ -1103,7 +2153,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS userid_mapping_pkey CASCADE;
 
     ALTER TABLE userid_mapping
-      ADD CONSTRAINT userid_mapping_pkey 
+      ADD CONSTRAINT userid_mapping_pkey
         PRIMARY KEY (app_id, supertokens_user_id, external_user_id);
 
     ALTER TABLE userid_mapping
@@ -1124,7 +2174,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS userid_mapping_supertokens_user_id_fkey;
 
     ALTER TABLE userid_mapping
-      ADD CONSTRAINT userid_mapping_supertokens_user_id_fkey 
+      ADD CONSTRAINT userid_mapping_supertokens_user_id_fkey
         FOREIGN KEY (app_id, supertokens_user_id)
         REFERENCES app_id_to_user_id (app_id, user_id) ON DELETE CASCADE;
 
@@ -1139,14 +2189,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT roles_pkey CASCADE;
 
     ALTER TABLE roles
-      ADD CONSTRAINT roles_pkey 
+      ADD CONSTRAINT roles_pkey
         PRIMARY KEY (app_id, role);
 
     ALTER TABLE roles
       DROP CONSTRAINT IF EXISTS roles_app_id_fkey;
 
     ALTER TABLE roles
-      ADD CONSTRAINT roles_app_id_fkey 
+      ADD CONSTRAINT roles_app_id_fkey
         FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
@@ -1161,14 +2211,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT role_permissions_pkey CASCADE;
 
     ALTER TABLE role_permissions
-      ADD CONSTRAINT role_permissions_pkey 
+      ADD CONSTRAINT role_permissions_pkey
         PRIMARY KEY (app_id, role, permission);
 
     ALTER TABLE role_permissions
       DROP CONSTRAINT IF EXISTS role_permissions_role_fkey;
 
     ALTER TABLE role_permissions
-      ADD CONSTRAINT role_permissions_role_fkey 
+      ADD CONSTRAINT role_permissions_role_fkey
         FOREIGN KEY (app_id, role)
         REFERENCES roles (app_id, role) ON DELETE CASCADE;
 
@@ -1188,14 +2238,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT user_roles_pkey CASCADE;
 
     ALTER TABLE user_roles
-      ADD CONSTRAINT user_roles_pkey 
+      ADD CONSTRAINT user_roles_pkey
         PRIMARY KEY (app_id, tenant_id, user_id, role);
 
     ALTER TABLE user_roles
       DROP CONSTRAINT IF EXISTS user_roles_tenant_id_fkey;
 
     ALTER TABLE user_roles
-      ADD CONSTRAINT user_roles_tenant_id_fkey 
+      ADD CONSTRAINT user_roles_tenant_id_fkey
         FOREIGN KEY (app_id, tenant_id)
         REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
 
@@ -1203,7 +2253,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS user_roles_role_fkey;
 
     ALTER TABLE user_roles
-      ADD CONSTRAINT user_roles_role_fkey 
+      ADD CONSTRAINT user_roles_role_fkey
         FOREIGN KEY (app_id, role)
         REFERENCES roles (app_id, role) ON DELETE CASCADE;
 
@@ -1224,14 +2274,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT user_metadata_pkey CASCADE;
 
     ALTER TABLE user_metadata
-      ADD CONSTRAINT user_metadata_pkey 
+      ADD CONSTRAINT user_metadata_pkey
         PRIMARY KEY (app_id, user_id);
 
     ALTER TABLE user_metadata
       DROP CONSTRAINT IF EXISTS user_metadata_app_id_fkey;
 
     ALTER TABLE user_metadata
-      ADD CONSTRAINT user_metadata_app_id_fkey 
+      ADD CONSTRAINT user_metadata_app_id_fkey
         FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
@@ -1246,7 +2296,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT dashboard_users_pkey CASCADE;
 
     ALTER TABLE dashboard_users
-      ADD CONSTRAINT dashboard_users_pkey 
+      ADD CONSTRAINT dashboard_users_pkey
         PRIMARY KEY (app_id, user_id);
 
     ALTER TABLE dashboard_users
@@ -1260,7 +2310,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS dashboard_users_app_id_fkey;
 
     ALTER TABLE dashboard_users
-      ADD CONSTRAINT dashboard_users_app_id_fkey 
+      ADD CONSTRAINT dashboard_users_app_id_fkey
         FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
@@ -1275,14 +2325,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT dashboard_user_sessions_pkey CASCADE;
 
     ALTER TABLE dashboard_user_sessions
-      ADD CONSTRAINT dashboard_user_sessions_pkey 
+      ADD CONSTRAINT dashboard_user_sessions_pkey
         PRIMARY KEY (app_id, session_id);
 
     ALTER TABLE dashboard_user_sessions
       DROP CONSTRAINT IF EXISTS dashboard_user_sessions_user_id_fkey;
 
     ALTER TABLE dashboard_user_sessions
-      ADD CONSTRAINT dashboard_user_sessions_user_id_fkey 
+      ADD CONSTRAINT dashboard_user_sessions_user_id_fkey
         FOREIGN KEY (app_id, user_id)
         REFERENCES dashboard_users (app_id, user_id) ON DELETE CASCADE;
 
@@ -1297,14 +2347,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT totp_users_pkey CASCADE;
 
     ALTER TABLE totp_users
-      ADD CONSTRAINT totp_users_pkey 
+      ADD CONSTRAINT totp_users_pkey
         PRIMARY KEY (app_id, user_id);
 
     ALTER TABLE totp_users
       DROP CONSTRAINT IF EXISTS totp_users_app_id_fkey;
 
     ALTER TABLE totp_users
-      ADD CONSTRAINT totp_users_app_id_fkey 
+      ADD CONSTRAINT totp_users_app_id_fkey
         FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
@@ -1319,14 +2369,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT totp_user_devices_pkey;
 
     ALTER TABLE totp_user_devices
-      ADD CONSTRAINT totp_user_devices_pkey 
+      ADD CONSTRAINT totp_user_devices_pkey
         PRIMARY KEY (app_id, user_id, device_name);
 
     ALTER TABLE totp_user_devices
       DROP CONSTRAINT IF EXISTS totp_user_devices_user_id_fkey;
 
     ALTER TABLE totp_user_devices
-      ADD CONSTRAINT totp_user_devices_user_id_fkey 
+      ADD CONSTRAINT totp_user_devices_user_id_fkey
         FOREIGN KEY (app_id, user_id)
         REFERENCES totp_users (app_id, user_id) ON DELETE CASCADE;
 
@@ -1342,14 +2392,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT totp_used_codes_pkey CASCADE;
 
     ALTER TABLE totp_used_codes
-      ADD CONSTRAINT totp_used_codes_pkey 
+      ADD CONSTRAINT totp_used_codes_pkey
         PRIMARY KEY (app_id, tenant_id, user_id, created_time_ms);
 
     ALTER TABLE totp_used_codes
       DROP CONSTRAINT IF EXISTS totp_used_codes_user_id_fkey;
 
     ALTER TABLE totp_used_codes
-      ADD CONSTRAINT totp_used_codes_user_id_fkey 
+      ADD CONSTRAINT totp_used_codes_user_id_fkey
         FOREIGN KEY (app_id, user_id)
         REFERENCES totp_users (app_id, user_id) ON DELETE CASCADE;
 
@@ -1357,7 +2407,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT IF EXISTS totp_used_codes_tenant_id_fkey;
 
     ALTER TABLE totp_used_codes
-      ADD CONSTRAINT totp_used_codes_tenant_id_fkey 
+      ADD CONSTRAINT totp_used_codes_tenant_id_fkey
         FOREIGN KEY (app_id, tenant_id)
         REFERENCES tenants (app_id, tenant_id) ON DELETE CASCADE;
 
@@ -1378,14 +2428,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       DROP CONSTRAINT user_last_active_pkey CASCADE;
 
     ALTER TABLE user_last_active
-      ADD CONSTRAINT user_last_active_pkey 
+      ADD CONSTRAINT user_last_active_pkey
         PRIMARY KEY (app_id, user_id);
 
     ALTER TABLE user_last_active
       DROP CONSTRAINT IF EXISTS user_last_active_app_id_fkey;
 
     ALTER TABLE user_last_active
-      ADD CONSTRAINT user_last_active_app_id_fkey 
+      ADD CONSTRAINT user_last_active_app_id_fkey
         FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
@@ -1403,15 +2453,16 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
 
     ```sql
     -- helper stored procedures
+    DELIMITER //
 
     CREATE PROCEDURE st_drop_all_fkeys()
     BEGIN
       DECLARE done INT DEFAULT FALSE;
       DECLARE dropCommand VARCHAR(255);
-      DECLARE dropCur CURSOR for 
-              SELECT concat('ALTER TABLE ', table_schema,'.',table_name,' DROP FOREIGN KEY ', constraint_name, ';') 
+      DECLARE dropCur CURSOR for
+              SELECT concat('ALTER TABLE ', table_schema,'.',table_name,' DROP FOREIGN KEY ', constraint_name, ';')
               FROM information_schema.table_constraints
-              WHERE constraint_type='FOREIGN KEY' 
+              WHERE constraint_type='FOREIGN KEY'
                   AND table_schema = DATABASE()
                   AND table_name in (
                     'all_auth_recipe_users',
@@ -1459,7 +2510,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
         END LOOP;
 
         CLOSE dropCur;
-    END
+    END //
 
     --
 
@@ -1467,10 +2518,10 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
     BEGIN
       DECLARE done INT DEFAULT FALSE;
       DECLARE dropCommand VARCHAR(255);
-      DECLARE dropCur CURSOR for 
-              SELECT concat('ALTER TABLE ', table_schema,'.',table_name,' DROP PRIMARY KEY ', ';') 
+      DECLARE dropCur CURSOR for
+              SELECT concat('ALTER TABLE ', table_schema,'.',table_name,' DROP PRIMARY KEY ', ';')
               FROM information_schema.table_constraints
-              WHERE constraint_type='PRIMARY KEY' 
+              WHERE constraint_type='PRIMARY KEY'
                   AND table_schema = DATABASE()
                   AND table_name in (
                     'all_auth_recipe_users',
@@ -1518,7 +2569,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
         END LOOP;
 
         CLOSE dropCur;
-    END
+    END //
 
     --
 
@@ -1526,10 +2577,10 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
     BEGIN
       DECLARE done INT DEFAULT FALSE;
       DECLARE dropCommand VARCHAR(255);
-      DECLARE dropCur CURSOR for 
-              SELECT concat('ALTER TABLE ', table_schema,'.',table_name,' DROP INDEX ', constraint_name, ';') 
+      DECLARE dropCur CURSOR for
+              SELECT concat('ALTER TABLE ', table_schema,'.',table_name,' DROP INDEX ', constraint_name, ';')
               FROM information_schema.table_constraints
-              WHERE constraint_type='UNIQUE' 
+              WHERE constraint_type='UNIQUE'
                   AND table_schema = DATABASE()
                   AND table_name in (
                     'all_auth_recipe_users',
@@ -1577,7 +2628,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
         END LOOP;
 
         CLOSE dropCur;
-    END
+    END //
 
     --
 
@@ -1585,10 +2636,10 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
     BEGIN
       DECLARE done INT DEFAULT FALSE;
       DECLARE dropCommand VARCHAR(255);
-      DECLARE dropCur CURSOR for 
+      DECLARE dropCur CURSOR for
               SELECT DISTINCT concat('ALTER TABLE ', table_schema, '.', table_name, ' DROP INDEX ', index_name, ';')
               FROM information_schema.statistics
-              WHERE NON_UNIQUE = 1 
+              WHERE NON_UNIQUE = 1
                 AND table_schema = database()
                 AND table_name in (
                   'all_auth_recipe_users',
@@ -1636,12 +2687,12 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
         END LOOP;
 
         CLOSE dropCur;
-    END
+    END //
 
     --
 
     CREATE PROCEDURE st_add_column_if_not_exists(
-    IN p_table_name varchar(50), 
+    IN p_table_name varchar(50),
     IN p_column_name varchar(50),
     IN p_column_type varchar(50),
     IN p_additional varchar(100),
@@ -1649,14 +2700,14 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
         READS SQL DATA
     BEGIN
         DECLARE v_count INT;
-        
+
         # Check wether column exist or not
         SELECT count(*) INTO v_count
         FROM information_schema.columns
         WHERE table_schema = database()
             AND table_name   = p_table_name
             AND column_name  = p_column_name;
-            
+
         IF v_count > 0 THEN
           # Return column already exists message
           SELECT 'Column already Exists' INTO p_status_message;
@@ -1668,14 +2719,15 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
         execute add_column_sql;
           SELECT 'Column Successfully  Created!' INTO p_status_message;
         END IF;
-    END
+    END //
 
+    DELIMITER ;
     -- Drop constraints and indexes
 
     CALL st_drop_all_fkeys();
     CALL st_drop_all_keys();
     CALL st_drop_all_pkeys();
-    CALL st_drop_all_indexes(); 
+    CALL st_drop_all_indexes();
 
     -- General Tables
 
@@ -1687,7 +2739,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
     ALTER TABLE apps
       ADD PRIMARY KEY(app_id);
 
-    INSERT IGNORE INTO apps (app_id, created_at_time) 
+    INSERT IGNORE INTO apps (app_id, created_at_time)
       VALUES ('public', 0);
 
     --
@@ -1705,7 +2757,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       ADD FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
-    INSERT IGNORE INTO tenants (app_id, tenant_id, created_at_time) 
+    INSERT IGNORE INTO tenants (app_id, tenant_id, created_at_time)
       VALUES ('public', 'public', 0);
 
     --
@@ -1735,7 +2787,7 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       ADD FOREIGN KEY (app_id)
         REFERENCES apps (app_id) ON DELETE CASCADE;
 
-    INSERT IGNORE INTO app_id_to_user_id (user_id, recipe_id) 
+    INSERT IGNORE INTO app_id_to_user_id (user_id, recipe_id)
       SELECT user_id, recipe_id
       FROM all_auth_recipe_users;
 
@@ -2282,9 +3334,9 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       from session_access_token_signing_keys;
     ```
 - If using `access_token_signing_key_dynamic` true or not set:
-  - ```sql
-    ALTER TABLE session_info ADD COLUMN use_static_key BOOLEAN NOT NULL DEFAULT(false);
-    ALTER TABLE session_info ALTER COLUMN use_static_key DROP DEFAULT;
+    - ```sql
+  ALTER TABLE session_info ADD COLUMN use_static_key BOOLEAN NOT NULL DEFAULT(false);
+  ALTER TABLE session_info ALTER COLUMN use_static_key DROP DEFAULT;
     ```
 
 #### Migration steps for MongoDB
@@ -2329,13 +3381,13 @@ This script updates the `phone_number` column in the `passwordless_users`, `pass
       {
         "$project": {
           "keys": 0,
-          
+
         }
       },
       {
         "$merge": {
           "into": "jwt_signing_keys",
-          
+
         }
       }
   ]);

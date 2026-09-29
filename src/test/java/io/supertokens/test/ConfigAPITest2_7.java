@@ -40,6 +40,9 @@ public class ConfigAPITest2_7 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -52,14 +55,14 @@ public class ConfigAPITest2_7 {
 
     @Test
     public void inputErrorConfigAPITest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         // null for parameters
         try {
-            HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:3567/config", null, 1000, 1000,
+            HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:" + HttpRequestForTesting.corePort + "/config", null, 1000, 1000,
                     null);
             fail();
         } catch (HttpResponseException e) {
@@ -72,7 +75,7 @@ public class ConfigAPITest2_7 {
         try {
             HashMap<String, String> map = new HashMap<>();
             map.put("pd", ProcessHandle.current().pid() + "");
-            HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:3567/config", map, 1000, 1000, null);
+            HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:" + HttpRequestForTesting.corePort + "/config", map, 1000, 1000, null);
             fail();
         } catch (HttpResponseException e) {
             assertTrue(e.getMessage()
@@ -87,9 +90,9 @@ public class ConfigAPITest2_7 {
 
     @Test
     public void testVersion2InputErrorConfigAPITest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         // null for parameters
@@ -124,9 +127,9 @@ public class ConfigAPITest2_7 {
     @Test
     public void testCustomConfigPath() throws Exception {
         String path = new File("../temp/config.yaml").getAbsolutePath();
-        String[] args = { "../", "configFile=" + path };
+        String[] args = {"../", "configFile=" + path};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         // map to store pid as parameter
@@ -148,10 +151,13 @@ public class ConfigAPITest2_7 {
     @Test
     public void testVersion2TestCustomConfigPath() throws Exception {
         String path = new File("../temp/config.yaml").getAbsolutePath();
-        String[] args = { "../", "configFile=" + path };
+        int port = TestingProcessManager.getFreePort();
+        String[] args = {"../", "configFile=" + path, "port="+port};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        HttpRequestForTesting.corePort = port;
 
         // map to store pid as parameter
         Map<String, String> map = new HashMap<>();
@@ -171,9 +177,9 @@ public class ConfigAPITest2_7 {
 
     @Test
     public void outputPossibilitiesConfigAPITest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         Main main = process.getProcess();
@@ -188,7 +194,7 @@ public class ConfigAPITest2_7 {
         map.put("pid", ProcessHandle.current().pid() + "");
 
         // check regular output
-        JsonObject response = HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:3567/config", map,
+        JsonObject response = HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:" + HttpRequestForTesting.corePort + "/config", map,
                 1000, 1000, null);
 
         assertEquals(response.get("status").getAsString(), "OK");
@@ -199,7 +205,7 @@ public class ConfigAPITest2_7 {
         map = new HashMap<>();
         map.put("pid", "-1");
 
-        response = HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:3567/config", map, 1000, 1000,
+        response = HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:" + HttpRequestForTesting.corePort + "/config", map, 1000, 1000,
                 null);
 
         assertEquals(response.get("status").getAsString(), "NOT_ALLOWED");
@@ -211,9 +217,9 @@ public class ConfigAPITest2_7 {
 
     @Test
     public void testVersion2OutputPossibilitiesConfigAPITest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         Main main = process.getProcess();

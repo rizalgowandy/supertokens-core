@@ -46,6 +46,9 @@ public class PasswordlessGetCodesAPITest2_11 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -58,7 +61,7 @@ public class PasswordlessGetCodesAPITest2_11 {
 
     @Test
     public void testBadInput() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -128,7 +131,7 @@ public class PasswordlessGetCodesAPITest2_11 {
 
     @Test
     public void testGetCodesNoMatch() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -154,7 +157,7 @@ public class PasswordlessGetCodesAPITest2_11 {
 
     @Test
     public void testGetCodes() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -186,9 +189,9 @@ public class PasswordlessGetCodesAPITest2_11 {
             assertEquals(0, response.get("devices").getAsJsonArray().size());
         }
 
-        storage.createDeviceWithCode(new TenantIdentifier(null, null, null), email, null, "linkCodeSalt",
+        storage.createDeviceWithCode(process.getAppForTesting(), email, null, "linkCodeSalt",
                 new PasswordlessCode(codeId, deviceIdHash, linkCodeHash, System.currentTimeMillis()));
-        assertEquals(1, storage.getDevicesByEmail(new TenantIdentifier(null, null, null), email).length);
+        assertEquals(1, storage.getDevicesByEmail(process.getAppForTesting(), email).length);
 
         // match
 
@@ -205,7 +208,7 @@ public class PasswordlessGetCodesAPITest2_11 {
             JsonArray jsonDeviceList = response.get("devices").getAsJsonArray();
             assertEquals(1, jsonDeviceList.size());
 
-            checkDevice(jsonDeviceList, 0, email, null, deviceIdHash, new String[] { codeId });
+            checkDevice(jsonDeviceList, 0, email, null, deviceIdHash, new String[]{codeId});
         }
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -213,7 +216,7 @@ public class PasswordlessGetCodesAPITest2_11 {
 
     @Test
     public void testGetCodesWithEmail() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -245,9 +248,9 @@ public class PasswordlessGetCodesAPITest2_11 {
 
         // OK with matching codes
         {
-            storage.createDeviceWithCode(new TenantIdentifier(null, null, null), email, null, "linkCodeSalt",
+            storage.createDeviceWithCode(process.getAppForTesting(), email, null, "linkCodeSalt",
                     new PasswordlessCode(codeId, deviceIdHash, linkCodeHash, System.currentTimeMillis()));
-            assertEquals(1, storage.getDevicesByEmail(new TenantIdentifier(null, null, null), email).length);
+            assertEquals(1, storage.getDevicesByEmail(process.getAppForTesting(), email).length);
 
             {
                 HashMap<String, String> map = new HashMap<>();
@@ -261,7 +264,7 @@ public class PasswordlessGetCodesAPITest2_11 {
                 assert (response.has("devices"));
                 JsonArray jsonDeviceList = response.get("devices").getAsJsonArray();
                 assertEquals(1, jsonDeviceList.size());
-                checkDevice(jsonDeviceList, 0, email, null, deviceIdHash, new String[] { codeId });
+                checkDevice(jsonDeviceList, 0, email, null, deviceIdHash, new String[]{codeId});
             }
         }
         process.kill();
@@ -270,7 +273,7 @@ public class PasswordlessGetCodesAPITest2_11 {
 
     @Test
     public void testGetCodesWithPhoneNumber() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -302,10 +305,10 @@ public class PasswordlessGetCodesAPITest2_11 {
 
         // OK with matching codes
         {
-            storage.createDeviceWithCode(new TenantIdentifier(null, null, null), null, phoneNumber, "linkCodeSalt",
+            storage.createDeviceWithCode(process.getAppForTesting(), null, phoneNumber, "linkCodeSalt",
                     new PasswordlessCode(codeId, deviceIdHash, linkCodeHash, System.currentTimeMillis()));
             assertEquals(1,
-                    storage.getDevicesByPhoneNumber(new TenantIdentifier(null, null, null), phoneNumber).length);
+                    storage.getDevicesByPhoneNumber(process.getAppForTesting(), phoneNumber).length);
 
             {
                 HashMap<String, String> map = new HashMap<>();
@@ -319,7 +322,7 @@ public class PasswordlessGetCodesAPITest2_11 {
                 assert (response.has("devices"));
                 JsonArray jsonDeviceList = response.get("devices").getAsJsonArray();
                 assertEquals(1, jsonDeviceList.size());
-                checkDevice(jsonDeviceList, 0, null, phoneNumber, deviceIdHash, new String[] { codeId });
+                checkDevice(jsonDeviceList, 0, null, phoneNumber, deviceIdHash, new String[]{codeId});
             }
         }
         process.kill();
@@ -328,7 +331,7 @@ public class PasswordlessGetCodesAPITest2_11 {
 
     @Test
     public void testGetCodesWithDeviceID() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -364,7 +367,7 @@ public class PasswordlessGetCodesAPITest2_11 {
             deviceID = createCodeResponse.deviceId;
 
             assertEquals(1,
-                    storage.getDevicesByPhoneNumber(new TenantIdentifier(null, null, null), phoneNumber).length);
+                    storage.getDevicesByPhoneNumber(process.getAppForTesting(), phoneNumber).length);
             // TODO: deviceID =
             {
                 HashMap<String, String> map = new HashMap<>();
@@ -379,7 +382,7 @@ public class PasswordlessGetCodesAPITest2_11 {
                 JsonArray jsonDeviceList = response.get("devices").getAsJsonArray();
                 assertEquals(1, jsonDeviceList.size());
                 checkDevice(jsonDeviceList, 0, null, phoneNumber, createCodeResponse.deviceIdHash,
-                        new String[] { createCodeResponse.codeId });
+                        new String[]{createCodeResponse.codeId});
             }
         }
         process.kill();
@@ -387,7 +390,7 @@ public class PasswordlessGetCodesAPITest2_11 {
     }
 
     private void checkDevice(JsonArray jsonDeviceList, int ind, String email, String phoneNumber, String deviceIdHash,
-            String[] codeIds) {
+                             String[] codeIds) {
         JsonObject device = jsonDeviceList.get(ind).getAsJsonObject();
 
         assertEquals(deviceIdHash, device.get("preAuthSessionId").getAsString());

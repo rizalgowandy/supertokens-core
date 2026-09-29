@@ -16,6 +16,19 @@
 
 package io.supertokens.webserver;
 
+import java.io.File;
+import java.util.UUID;
+import java.util.logging.Handler;
+import java.util.logging.Logger;
+
+import org.apache.catalina.LifecycleException;
+import org.apache.catalina.LifecycleState;
+import org.apache.catalina.connector.Connector;
+import org.apache.catalina.core.StandardContext;
+import org.apache.catalina.startup.Tomcat;
+import org.apache.tomcat.util.http.fileupload.FileUtils;
+import org.jetbrains.annotations.TestOnly;
+
 import io.supertokens.Main;
 import io.supertokens.OperatingSystem;
 import io.supertokens.ResourceDistributor;
@@ -25,42 +38,154 @@ import io.supertokens.exceptions.QuitProgramException;
 import io.supertokens.output.Logging;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
-import io.supertokens.webserver.api.accountlinking.*;
-import io.supertokens.webserver.api.core.*;
-import io.supertokens.webserver.api.dashboard.*;
+import io.supertokens.webserver.api.accountlinking.CanCreatePrimaryUserAPI;
+import io.supertokens.webserver.api.accountlinking.CanLinkAccountsAPI;
+import io.supertokens.webserver.api.accountlinking.CreatePrimaryUserAPI;
+import io.supertokens.webserver.api.accountlinking.LinkAccountsAPI;
+import io.supertokens.webserver.api.accountlinking.UnlinkAccountAPI;
+import io.supertokens.webserver.api.bulkimport.BulkImportAPI;
+import io.supertokens.webserver.api.migration.MigrationBackfillProgressAPI;
+import io.supertokens.webserver.api.migration.MigrationModeAPI;
+import io.supertokens.webserver.api.bulkimport.CountBulkImportUsersAPI;
+import io.supertokens.webserver.api.bulkimport.DeleteBulkImportUserAPI;
+import io.supertokens.webserver.api.bulkimport.ImportUserAPI;
+import io.supertokens.webserver.api.core.ActiveUsersCountAPI;
+import io.supertokens.webserver.api.core.ApiVersionAPI;
+import io.supertokens.webserver.api.core.ConfigAPI;
+import io.supertokens.webserver.api.core.DeleteUserAPI;
+import io.supertokens.webserver.api.core.EEFeatureFlagAPI;
+import io.supertokens.webserver.api.core.GetUserByIdAPI;
+import io.supertokens.webserver.api.core.HelloAPI;
+import io.supertokens.webserver.api.core.JWKSPublicAPI;
+import io.supertokens.webserver.api.core.LicenseKeyAPI;
+import io.supertokens.webserver.api.core.ListUsersByAccountInfoAPI;
+import io.supertokens.webserver.api.core.NotFoundOrHelloAPI;
+import io.supertokens.webserver.api.core.RequestStatsAPI;
+import io.supertokens.webserver.api.core.SearchTagsAPI;
+import io.supertokens.webserver.api.core.TelemetryAPI;
+import io.supertokens.webserver.api.core.UsersAPI;
+import io.supertokens.webserver.api.core.UsersCountAPI;
+import io.supertokens.webserver.api.dashboard.DashboardSignInAPI;
+import io.supertokens.webserver.api.dashboard.DashboardUserAPI;
+import io.supertokens.webserver.api.dashboard.GetDashboardSessionsForUserAPI;
+import io.supertokens.webserver.api.dashboard.GetDashboardUsersAPI;
+import io.supertokens.webserver.api.dashboard.GetTenantCoreConfigForDashboardAPI;
+import io.supertokens.webserver.api.dashboard.RevokeSessionAPI;
+import io.supertokens.webserver.api.dashboard.VerifyDashboardUserSessionAPI;
+import io.supertokens.webserver.api.emailpassword.ConsumeResetPasswordAPI;
+import io.supertokens.webserver.api.emailpassword.GeneratePasswordResetTokenAPI;
+import io.supertokens.webserver.api.emailpassword.ImportUserWithPasswordHashAPI;
+import io.supertokens.webserver.api.emailpassword.ResetPasswordAPI;
+import io.supertokens.webserver.api.emailpassword.SignInAPI;
+import io.supertokens.webserver.api.emailpassword.SignUpAPI;
 import io.supertokens.webserver.api.emailpassword.UserAPI;
-import io.supertokens.webserver.api.emailpassword.*;
 import io.supertokens.webserver.api.emailverification.GenerateEmailVerificationTokenAPI;
 import io.supertokens.webserver.api.emailverification.RevokeAllTokensForUserAPI;
 import io.supertokens.webserver.api.emailverification.UnverifyEmailAPI;
 import io.supertokens.webserver.api.emailverification.VerifyEmailAPI;
 import io.supertokens.webserver.api.jwt.JWKSAPI;
 import io.supertokens.webserver.api.jwt.JWTSigningAPI;
-import io.supertokens.webserver.api.multitenancy.*;
+import io.supertokens.webserver.api.multitenancy.AssociateUserToTenantAPI;
+import io.supertokens.webserver.api.multitenancy.CreateOrUpdateAppAPI;
+import io.supertokens.webserver.api.multitenancy.CreateOrUpdateAppV2API;
+import io.supertokens.webserver.api.multitenancy.CreateOrUpdateConnectionUriDomainAPI;
+import io.supertokens.webserver.api.multitenancy.CreateOrUpdateConnectionUriDomainV2API;
+import io.supertokens.webserver.api.multitenancy.CreateOrUpdateTenantOrGetTenantAPI;
+import io.supertokens.webserver.api.multitenancy.CreateOrUpdateTenantOrGetTenantV2API;
+import io.supertokens.webserver.api.multitenancy.DisassociateUserFromTenant;
+import io.supertokens.webserver.api.multitenancy.ListAppsAPI;
+import io.supertokens.webserver.api.multitenancy.ListAppsV2API;
+import io.supertokens.webserver.api.multitenancy.ListConnectionUriDomainsAPI;
+import io.supertokens.webserver.api.multitenancy.ListConnectionUriDomainsV2API;
+import io.supertokens.webserver.api.multitenancy.ListTenantsAPI;
+import io.supertokens.webserver.api.multitenancy.ListTenantsV2API;
+import io.supertokens.webserver.api.multitenancy.RemoveAppAPI;
+import io.supertokens.webserver.api.multitenancy.RemoveConnectionUriDomainAPI;
+import io.supertokens.webserver.api.multitenancy.RemoveTenantAPI;
 import io.supertokens.webserver.api.multitenancy.thirdparty.CreateOrUpdateThirdPartyConfigAPI;
 import io.supertokens.webserver.api.multitenancy.thirdparty.RemoveThirdPartyConfigAPI;
-import io.supertokens.webserver.api.passwordless.*;
-import io.supertokens.webserver.api.session.*;
+import io.supertokens.webserver.api.oauth.CreateUpdateOrGetOAuthClientAPI;
+import io.supertokens.webserver.api.oauth.OAuthAcceptAuthConsentRequestAPI;
+import io.supertokens.webserver.api.oauth.OAuthAcceptAuthLoginRequestAPI;
+import io.supertokens.webserver.api.oauth.OAuthAcceptAuthLogoutRequestAPI;
+import io.supertokens.webserver.api.oauth.OAuthAuthAPI;
+import io.supertokens.webserver.api.oauth.OAuthClientListAPI;
+import io.supertokens.webserver.api.oauth.OAuthGetAuthConsentRequestAPI;
+import io.supertokens.webserver.api.oauth.OAuthGetAuthLoginRequestAPI;
+import io.supertokens.webserver.api.oauth.OAuthLogoutAPI;
+import io.supertokens.webserver.api.oauth.OAuthRejectAuthConsentRequestAPI;
+import io.supertokens.webserver.api.oauth.OAuthRejectAuthLoginRequestAPI;
+import io.supertokens.webserver.api.oauth.OAuthRejectAuthLogoutRequestAPI;
+import io.supertokens.webserver.api.oauth.OAuthTokenAPI;
+import io.supertokens.webserver.api.oauth.OAuthTokenIntrospectAPI;
+import io.supertokens.webserver.api.oauth.RemoveOAuthClientAPI;
+import io.supertokens.webserver.api.oauth.RevokeOAuthSessionAPI;
+import io.supertokens.webserver.api.oauth.RevokeOAuthTokenAPI;
+import io.supertokens.webserver.api.oauth.RevokeOAuthTokensAPI;
+import io.supertokens.webserver.api.passwordless.CheckCodeAPI;
+import io.supertokens.webserver.api.passwordless.ConsumeCodeAPI;
+import io.supertokens.webserver.api.passwordless.CreateCodeAPI;
+import io.supertokens.webserver.api.passwordless.DeleteCodeAPI;
+import io.supertokens.webserver.api.passwordless.DeleteCodesAPI;
+import io.supertokens.webserver.api.passwordless.GetCodesAPI;
+import io.supertokens.webserver.api.saml.CreateOrUpdateSamlClientAPI;
+import io.supertokens.webserver.api.saml.CreateSamlLoginRedirectAPI;
+import io.supertokens.webserver.api.saml.GetUserInfoAPI;
+import io.supertokens.webserver.api.saml.HandleSamlCallbackAPI;
+import io.supertokens.webserver.api.saml.LegacyAuthorizeAPI;
+import io.supertokens.webserver.api.saml.LegacyCallbackAPI;
+import io.supertokens.webserver.api.saml.LegacyTokenAPI;
+import io.supertokens.webserver.api.saml.LegacyUserinfoAPI;
+import io.supertokens.webserver.api.saml.ListSamlClientsAPI;
+import io.supertokens.webserver.api.saml.RemoveSamlClientAPI;
+import io.supertokens.webserver.api.saml.SPMetadataAPI;
+import io.supertokens.webserver.api.session.HandshakeAPI;
+import io.supertokens.webserver.api.session.JWTDataAPI;
+import io.supertokens.webserver.api.session.RefreshSessionAPI;
+import io.supertokens.webserver.api.session.SessionAPI;
+import io.supertokens.webserver.api.session.SessionDataAPI;
+import io.supertokens.webserver.api.session.SessionRegenerateAPI;
+import io.supertokens.webserver.api.session.SessionRemoveAPI;
+import io.supertokens.webserver.api.session.SessionUserAPI;
+import io.supertokens.webserver.api.session.VerifySessionAPI;
 import io.supertokens.webserver.api.thirdparty.GetUsersByEmailAPI;
 import io.supertokens.webserver.api.thirdparty.SignInUpAPI;
-import io.supertokens.webserver.api.totp.*;
+import io.supertokens.webserver.api.totp.BulkGetTotpDeviceStatusAPI;
+import io.supertokens.webserver.api.totp.CreateOrUpdateTotpDeviceAPI;
+import io.supertokens.webserver.api.totp.GetTotpDevicesAPI;
+import io.supertokens.webserver.api.totp.ImportTotpDeviceAPI;
+import io.supertokens.webserver.api.totp.RemoveTotpDeviceAPI;
+import io.supertokens.webserver.api.totp.VerifyTotpAPI;
+import io.supertokens.webserver.api.totp.VerifyTotpDeviceAPI;
 import io.supertokens.webserver.api.useridmapping.RemoveUserIdMappingAPI;
 import io.supertokens.webserver.api.useridmapping.UpdateExternalUserIdInfoAPI;
 import io.supertokens.webserver.api.useridmapping.UserIdMappingAPI;
+import io.supertokens.webserver.api.usermetadata.BulkGetUserMetadataAPI;
 import io.supertokens.webserver.api.usermetadata.RemoveUserMetadataAPI;
 import io.supertokens.webserver.api.usermetadata.UserMetadataAPI;
-import io.supertokens.webserver.api.userroles.*;
-import org.apache.catalina.LifecycleException;
-import org.apache.catalina.LifecycleState;
-import org.apache.catalina.connector.Connector;
-import org.apache.catalina.core.StandardContext;
-import org.apache.catalina.startup.Tomcat;
-import org.apache.tomcat.util.http.fileupload.FileUtils;
-
-import java.io.File;
-import java.util.UUID;
-import java.util.logging.Handler;
-import java.util.logging.Logger;
+import io.supertokens.webserver.api.userroles.AddUserRoleAPI;
+import io.supertokens.webserver.api.userroles.CreateRoleAPI;
+import io.supertokens.webserver.api.userroles.GetPermissionsForRoleAPI;
+import io.supertokens.webserver.api.userroles.GetRolesAPI;
+import io.supertokens.webserver.api.userroles.GetRolesForPermissionAPI;
+import io.supertokens.webserver.api.userroles.GetRolesForUserAPI;
+import io.supertokens.webserver.api.userroles.GetUsersForRoleAPI;
+import io.supertokens.webserver.api.userroles.RemovePermissionsForRoleAPI;
+import io.supertokens.webserver.api.userroles.RemoveRoleAPI;
+import io.supertokens.webserver.api.userroles.RemoveUserRoleAPI;
+import io.supertokens.webserver.api.webauthn.ConsumeRecoverAccountTokenAPI;
+import io.supertokens.webserver.api.webauthn.CredentialsRegisterAPI;
+import io.supertokens.webserver.api.webauthn.GenerateRecoverAccountTokenAPI;
+import io.supertokens.webserver.api.webauthn.GetCredentialAPI;
+import io.supertokens.webserver.api.webauthn.GetGeneratedOptionsAPI;
+import io.supertokens.webserver.api.webauthn.GetUserFromRecoverAccountTokenAPI;
+import io.supertokens.webserver.api.webauthn.ListCredentialsAPI;
+import io.supertokens.webserver.api.webauthn.OptionsRegisterAPI;
+import io.supertokens.webserver.api.webauthn.RemoveCredentialAPI;
+import io.supertokens.webserver.api.webauthn.RemoveOptionsAPI;
+import io.supertokens.webserver.api.webauthn.SignInOptionsAPI;
+import io.supertokens.webserver.api.webauthn.SignUpWithCredentialRegisterAPI;
+import io.supertokens.webserver.api.webauthn.UpdateUserEmailAPI;
 
 public class Webserver extends ResourceDistributor.SingletonResource {
 
@@ -101,10 +226,12 @@ public class Webserver extends ResourceDistributor.SingletonResource {
             return;
         }
 
-        File webserverTemp = new File(CLIOptions.get(main).getInstallationPath() + "webserver-temp");
+        String tempDirLocation = decideTempDirLocation();
+        File webserverTemp = new File(tempDirLocation);
         if (!webserverTemp.exists()) {
-            webserverTemp.mkdir();
+            webserverTemp.mkdirs();
         }
+
 
         CONTEXT_PATH = Config.getBaseConfig(main).getBasePath();
 
@@ -117,7 +244,7 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         setupLogging();
 
         // baseDir is a place for Tomcat to store temporary files..
-        tomcat.setBaseDir(CLIOptions.get(main).getInstallationPath() + TEMP_FOLDER);
+        tomcat.setBaseDir(tempDirLocation);
 
         // set thread pool size and port
         Connector connector = new Connector();
@@ -131,7 +258,7 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         tomcat.getEngine().setName(main.getProcessId());
 
         // create docBase folder and get context
-        new File(CLIOptions.get(main).getInstallationPath() + TEMP_FOLDER + "webapps").mkdirs();
+        new File(decideTempDirLocation() + "webapps").mkdirs();
         StandardContext context = (StandardContext) tomcat.addContext(CONTEXT_PATH, "");
 
         // the amount of time for which we should wait for all requests to finish when
@@ -156,6 +283,15 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         tomcatReference = new TomcatReference(tomcat, context);
 
         setupRoutes();
+    }
+
+    private String decideTempDirLocation(){
+        String userSetTempDir = CLIOptions.get(main).getTempDirLocation();
+        if(userSetTempDir != null && !userSetTempDir.endsWith(File.separator)) {
+            userSetTempDir = userSetTempDir + File.separator;
+        }
+        String defaultTempDir = CLIOptions.get(main).getInstallationPath() + TEMP_FOLDER;
+        return userSetTempDir != null ? userSetTempDir : defaultTempDir;
     }
 
     private void setupRoutes() {
@@ -200,6 +336,7 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         addAPI(new JWKSAPI(main));
         addAPI(new UserMetadataAPI(main));
         addAPI(new RemoveUserMetadataAPI(main));
+        addAPI(new BulkGetUserMetadataAPI(main));
         addAPI(new CreateRoleAPI(main));
         addAPI(new AddUserRoleAPI(main));
         addAPI(new RemoveUserRoleAPI(main));
@@ -218,6 +355,7 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         addAPI(new RemoveTotpDeviceAPI(main));
         addAPI(new GetTotpDevicesAPI(main));
         addAPI(new ImportTotpDeviceAPI(main));
+        addAPI(new BulkGetTotpDeviceStatusAPI(main));
         addAPI(new UpdateExternalUserIdInfoAPI(main));
         addAPI(new ImportUserWithPasswordHashAPI(main));
         addAPI(new LicenseKeyAPI(main));
@@ -230,17 +368,23 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         addAPI(new GetDashboardSessionsForUserAPI(main));
         addAPI(new SearchTagsAPI(main));
 
-        addAPI(new CreateOrUpdateConnectionUriDomainAPI(main));
+        addAPI(new CreateOrUpdateConnectionUriDomainAPI(main)); // deprecated
+        addAPI(new CreateOrUpdateConnectionUriDomainV2API(main));
         addAPI(new RemoveConnectionUriDomainAPI(main));
-        addAPI(new ListConnectionUriDomainsAPI(main));
+        addAPI(new ListConnectionUriDomainsAPI(main)); // deprecated
+        addAPI(new ListConnectionUriDomainsV2API(main));
 
-        addAPI(new CreateOrUpdateAppAPI(main));
+        addAPI(new CreateOrUpdateAppAPI(main)); // deprecated
+        addAPI(new CreateOrUpdateAppV2API(main));
         addAPI(new RemoveAppAPI(main));
-        addAPI(new ListAppsAPI(main));
+        addAPI(new ListAppsAPI(main)); // deprecated
+        addAPI(new ListAppsV2API(main));
 
-        addAPI(new CreateOrUpdateTenantOrGetTenantAPI(main));
+        addAPI(new CreateOrUpdateTenantOrGetTenantAPI(main)); // deprecated
+        addAPI(new CreateOrUpdateTenantOrGetTenantV2API(main));
         addAPI(new RemoveTenantAPI(main));
-        addAPI(new ListTenantsAPI(main));
+        addAPI(new ListTenantsAPI(main)); // deprecated
+        addAPI(new ListTenantsV2API(main));
 
         addAPI(new CreateOrUpdateThirdPartyConfigAPI(main));
         addAPI(new RemoveThirdPartyConfigAPI(main));
@@ -259,6 +403,65 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         addAPI(new ConsumeResetPasswordAPI(main));
 
         addAPI(new RequestStatsAPI(main));
+        addAPI(new GetTenantCoreConfigForDashboardAPI(main));
+
+        addAPI(new BulkImportAPI(main));
+        addAPI(new DeleteBulkImportUserAPI(main));
+        addAPI(new ImportUserAPI(main));
+        addAPI(new CountBulkImportUsersAPI(main));
+
+        addAPI(new OAuthAuthAPI(main));
+        addAPI(new OAuthTokenAPI(main));
+        addAPI(new CreateUpdateOrGetOAuthClientAPI(main));
+        addAPI(new OAuthClientListAPI(main));
+        addAPI(new RemoveOAuthClientAPI(main));
+
+        addAPI(new OAuthGetAuthConsentRequestAPI(main));
+        addAPI(new OAuthAcceptAuthConsentRequestAPI(main));
+        addAPI(new OAuthRejectAuthConsentRequestAPI(main));
+        addAPI(new OAuthGetAuthLoginRequestAPI(main));
+        addAPI(new OAuthAcceptAuthLoginRequestAPI(main));
+        addAPI(new OAuthRejectAuthLoginRequestAPI(main));
+        addAPI(new OAuthAcceptAuthLogoutRequestAPI(main));
+        addAPI(new OAuthRejectAuthLogoutRequestAPI(main));
+        addAPI(new OAuthTokenIntrospectAPI(main));
+
+        addAPI(new RevokeOAuthTokenAPI(main));
+        addAPI(new RevokeOAuthTokensAPI(main));
+        addAPI(new RevokeOAuthSessionAPI(main));
+        addAPI(new OAuthLogoutAPI(main));
+
+        // saml
+        addAPI(new CreateOrUpdateSamlClientAPI(main));
+        addAPI(new ListSamlClientsAPI(main));
+        addAPI(new RemoveSamlClientAPI(main));
+        addAPI(new CreateSamlLoginRedirectAPI(main));
+        addAPI(new HandleSamlCallbackAPI(main));
+        addAPI(new GetUserInfoAPI(main));
+        addAPI(new LegacyAuthorizeAPI(main));
+        addAPI(new LegacyCallbackAPI(main));
+        addAPI(new LegacyTokenAPI(main));
+        addAPI(new LegacyUserinfoAPI(main));
+        addAPI(new SPMetadataAPI(main));
+
+        //webauthn
+        addAPI(new OptionsRegisterAPI(main));
+        addAPI(new SignInOptionsAPI(main));
+        addAPI(new CredentialsRegisterAPI(main));
+        addAPI(new SignUpWithCredentialRegisterAPI(main));
+        addAPI(new GetGeneratedOptionsAPI(main));
+        addAPI(new io.supertokens.webserver.api.webauthn.SignInAPI(main));
+        addAPI(new ConsumeRecoverAccountTokenAPI(main));
+        addAPI(new GenerateRecoverAccountTokenAPI(main));
+        addAPI(new GetUserFromRecoverAccountTokenAPI(main));
+        addAPI(new RemoveCredentialAPI(main));
+        addAPI(new RemoveOptionsAPI(main));
+        addAPI(new ListCredentialsAPI(main));
+        addAPI(new GetCredentialAPI(main));
+        addAPI(new UpdateUserEmailAPI(main));
+
+        addAPI(new MigrationModeAPI(main));
+        addAPI(new MigrationBackfillProgressAPI(main));
 
         StandardContext context = tomcatReference.getContext();
         Tomcat tomcat = tomcatReference.getTomcat();
@@ -300,7 +503,7 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         try {
             // we want to clear just this process' folder and not all since other processes
             // might still be running.
-            FileUtils.deleteDirectory(new File(CLIOptions.get(main).getInstallationPath() + TEMP_FOLDER));
+            FileUtils.deleteDirectory(new File(decideTempDirLocation()));
         } catch (Exception ignored) {
         }
 
@@ -346,6 +549,11 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         }
     }
 
+    @TestOnly
+    public TomcatReference getTomcatReference(){
+        return tomcatReference;
+    }
+
     public static class TomcatReference {
         private Tomcat tomcat;
         private StandardContext context;
@@ -356,6 +564,11 @@ public class Webserver extends ResourceDistributor.SingletonResource {
         }
 
         Tomcat getTomcat() {
+            return tomcat;
+        }
+
+        @TestOnly
+        public Tomcat getTomcatForTest(){
             return tomcat;
         }
 

@@ -35,6 +35,7 @@ public class StartHandler extends CommandHandler {
     public void doCommand(String installationDir, boolean viaInstaller, String[] args) {
         String space = CLIOptionsParser.parseOption("--with-space", args);
         String configPath = CLIOptionsParser.parseOption("--with-config", args);
+        String tempDirLocation = CLIOptionsParser.parseOption("--with-temp-dir", args);
         if (configPath != null) {
             configPath = new File(configPath).getAbsolutePath();
         }
@@ -42,12 +43,38 @@ public class StartHandler extends CommandHandler {
         String host = CLIOptionsParser.parseOption("--host", args);
         boolean foreground = CLIOptionsParser.hasKey("--foreground", args);
         boolean forceNoInMemDB = CLIOptionsParser.hasKey("--no-in-mem-db", args);
+        boolean javaagentEnabled = CLIOptionsParser.hasKey("--javaagent", args);
+        boolean jmxEnabled = CLIOptionsParser.hasKey("--jmx", args);
+        String jmxPort = CLIOptionsParser.parseOption("--jmx-port", args);
+        String jmxAuthenticate = CLIOptionsParser.parseOption("--jmx-authenticate", args);
+        String jmxSSL = CLIOptionsParser.parseOption("--jmx-ssl", args);
 
         List<String> commands = new ArrayList<>();
         if (OperatingSystem.getOS() == OperatingSystem.OS.WINDOWS) {
             commands.add(installationDir + "jre\\bin\\java.exe");
             commands.add("-classpath");
             commands.add("\"" + installationDir + "core\\*\";\"" + installationDir + "plugin-interface\\*\"");
+            if (javaagentEnabled) {
+                commands.add("-javaagent:\"" + installationDir + "agent\\opentelemetry-javaagent.jar\"");
+            }
+            if (jmxEnabled) {
+                commands.add("-Dcom.sun.management.jmxremote");
+                if (jmxPort != null) {
+                    commands.add("-Dcom.sun.management.jmxremote.port=" + jmxPort);
+                } else {
+                    commands.add("-Dcom.sun.management.jmxremote.port=9010");
+                }
+                if (jmxAuthenticate != null) {
+                    commands.add("-Dcom.sun.management.jmxremote.authenticate=" + jmxAuthenticate);
+                } else {
+                    commands.add("-Dcom.sun.management.jmxremote.authenticate=false");
+                }
+                if (jmxSSL != null) {
+                    commands.add("-Dcom.sun.management.jmxremote.ssl=" + jmxSSL);
+                } else {
+                    commands.add("-Dcom.sun.management.jmxremote.ssl=false");
+                }
+            }
             if (space != null) {
                 commands.add("-Xmx" + space + "M");
             }
@@ -67,12 +94,36 @@ public class StartHandler extends CommandHandler {
             if (forceNoInMemDB) {
                 commands.add("forceNoInMemDB=true");
             }
+            if(tempDirLocation != null && !tempDirLocation.isEmpty()) {
+                commands.add("tempDirLocation=" + tempDirLocation);
+            }
         } else {
             commands.add(installationDir + "jre/bin/java");
             commands.add("-Djava.security.egd=file:/dev/urandom");
             commands.add("-classpath");
             commands.add(
                     installationDir + "core/*:" + installationDir + "plugin-interface/*:" + installationDir + "ee/*");
+            if (javaagentEnabled) {
+                commands.add("-javaagent:" + installationDir + "agent/opentelemetry-javaagent.jar");
+            }
+            if (jmxEnabled) {
+                commands.add("-Dcom.sun.management.jmxremote");
+                if (jmxPort != null) {
+                    commands.add("-Dcom.sun.management.jmxremote.port=" + jmxPort);
+                } else {
+                    commands.add("-Dcom.sun.management.jmxremote.port=9010");
+                }
+                if (jmxAuthenticate != null) {
+                    commands.add("-Dcom.sun.management.jmxremote.authenticate=" + jmxAuthenticate);
+                } else {
+                    commands.add("-Dcom.sun.management.jmxremote.authenticate=false");
+                }
+                if (jmxSSL != null) {
+                    commands.add("-Dcom.sun.management.jmxremote.ssl=" + jmxSSL);
+                } else {
+                    commands.add("-Dcom.sun.management.jmxremote.ssl=false");
+                }
+            }
             if (space != null) {
                 commands.add("-Xmx" + space + "M");
             }
@@ -90,14 +141,18 @@ public class StartHandler extends CommandHandler {
             if (forceNoInMemDB) {
                 commands.add("forceNoInMemDB=true");
             }
+            if(tempDirLocation != null && !tempDirLocation.isEmpty()) {
+                commands.add("tempDirLocation=" + tempDirLocation);
+            }
         }
         if (!foreground) {
             try {
                 ProcessBuilder pb = new ProcessBuilder(commands);
+                Logging.info("Command to be run: " + String.join(" ", pb.command()));
                 pb.redirectErrorStream(true);
                 Process process = pb.start();
                 try (InputStreamReader in = new InputStreamReader(process.getInputStream());
-                        BufferedReader reader = new BufferedReader(in)) {
+                     BufferedReader reader = new BufferedReader(in)) {
                     String line;
                     boolean success = false;
                     while ((line = reader.readLine()) != null) {
@@ -172,6 +227,15 @@ public class StartHandler extends CommandHandler {
                 "Sets the host on which this instance of SuperTokens should run. Example: \"--host=192.168.0.1\""));
         options.add(
                 new Option("--foreground", "Runs this instance of SuperTokens in the foreground (not as a daemon)"));
+        options.add(
+                new Option("--with-temp-dir", "Uses the passed dir as temp dir, instead of the internal default."));
+        options.add(new Option("--javaagent", "Enables the OpenTelemetry Javaagent for tracing and metrics."));
+        options.add(new Option("--jmx", "Enables JMX management and monitoring."));
+        options.add(new Option("--jmx-port", "Sets the port for JMX. Defaults to 9010 if --jmx is passed."));
+        options.add(new Option("--jmx-authenticate",
+                "Sets whether JMX authentication is enabled or not. Defaults to false if --jmx is passed."));
+        options.add(new Option("--jmx-ssl",
+                "Sets whether JMX SSL is enabled or not. Defaults to false if --jmx is passed."));
         return options;
     }
 

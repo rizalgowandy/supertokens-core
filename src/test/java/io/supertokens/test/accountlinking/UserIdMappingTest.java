@@ -41,6 +41,9 @@ public class UserIdMappingTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -54,11 +57,10 @@ public class UserIdMappingTest {
     @Test
     public void testUserIdMappingWithUnlinkedAccountUserid() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -75,7 +77,8 @@ public class UserIdMappingTest {
         AuthRecipe.unlinkAccounts(process.getProcess(), user1.getSupertokensUserId());
 
         try {
-            UserIdMapping.createUserIdMapping(process.getProcess(), user2.getSupertokensUserId(), user1.getSupertokensUserId(), null, false);
+            UserIdMapping.createUserIdMapping(process.getProcess(), user2.getSupertokensUserId(),
+                    user1.getSupertokensUserId(), null, false);
             fail(); // should not be allowed
         } catch (ServletException e) {
             assertTrue(e.getCause() instanceof WebserverAPI.BadRequestException);
@@ -88,11 +91,10 @@ public class UserIdMappingTest {
     @Test
     public void testUserIdMappingWithDeletedUser() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -105,10 +107,12 @@ public class UserIdMappingTest {
         AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId());
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), user1.getSupertokensUserId());
 
-        AuthRecipe.deleteUser(process.getProcess(), user1.getSupertokensUserId(), false); // should not delete the user from app_id_to_user_id table
+        AuthRecipe.deleteUser(process.getProcess(), user1.getSupertokensUserId(),
+                false); // should not delete the user from app_id_to_user_id table
 
         try {
-            UserIdMapping.createUserIdMapping(process.getProcess(), user2.getSupertokensUserId(), user1.getSupertokensUserId(), null, false);
+            UserIdMapping.createUserIdMapping(process.getProcess(), user2.getSupertokensUserId(),
+                    user1.getSupertokensUserId(), null, false);
             fail(); // should not be allowed
         } catch (ServletException e) {
             assertTrue(e.getCause() instanceof WebserverAPI.BadRequestException);

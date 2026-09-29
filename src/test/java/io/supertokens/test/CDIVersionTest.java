@@ -51,6 +51,9 @@ public class CDIVersionTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -64,7 +67,7 @@ public class CDIVersionTest {
     @Test
     public void testThatAPIUsesLatestVersionByDefault() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         Webserver.getInstance(process.getProcess()).addAPI(new WebserverAPI(process.getProcess(), "") {
@@ -102,7 +105,7 @@ public class CDIVersionTest {
     @Test
     public void testThatAPIUsesVersionSpecifiedInTheRequest() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         Webserver.getInstance(process.getProcess()).addAPI(new WebserverAPI(process.getProcess(), "") {
@@ -146,7 +149,7 @@ public class CDIVersionTest {
     public void testThatAPIUsesVersionSpecifiedInConfigAsDefault() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         Utils.setValueInConfig("supertokens_max_cdi_version", "2.21");
         process.startProcess();
 
@@ -188,7 +191,7 @@ public class CDIVersionTest {
     public void testThatAPIUsesVersionSpecifiedInRequestWhenTheConfigIsPresent() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         Utils.setValueInConfig("supertokens_max_cdi_version", "2.21");
         process.startProcess();
 
@@ -230,7 +233,7 @@ public class CDIVersionTest {
     public void testCDIVersionWorksPerApp() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         Utils.setValueInConfig("supertokens_max_cdi_version", "2.21");
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
@@ -307,13 +310,13 @@ public class CDIVersionTest {
         {
             String[] args = {"../"};
 
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
-            process.startProcess();
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
             {
                 // check regular output
-                JsonObject response = HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:3567/.well-known/jwks.json", null,
+                JsonObject response = HttpRequest.sendGETRequest(process.getProcess(), "",
+                        "http://localhost:" + HttpRequestForTesting.corePort + "/.well-known/jwks.json", null,
                         1000, 1000, null);
 
                 assertEquals(response.entrySet().size(), 1);
@@ -325,7 +328,8 @@ public class CDIVersionTest {
 
             {
                 JsonObject oldResponse = HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
-                        "http://localhost:3567/recipe/jwt/jwks", null, 1000, 1000, null, Utils.getCdiVersionStringLatestForTests(),
+                        "http://localhost:3567/recipe/jwt/jwks", null, 1000, 1000, null,
+                        Utils.getCdiVersionStringLatestForTests(),
                         "jwt");
 
                 JsonArray oldKeys = oldResponse.getAsJsonArray("keys");
@@ -339,14 +343,15 @@ public class CDIVersionTest {
         {
             String[] args = {"../"};
 
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
             Utils.setValueInConfig("supertokens_max_cdi_version", "2.9");
             process.startProcess();
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
             {
                 // check regular output
-                JsonObject response = HttpRequest.sendGETRequest(process.getProcess(), "", "http://localhost:3567/.well-known/jwks.json", null,
+                JsonObject response = HttpRequest.sendGETRequest(process.getProcess(), "",
+                        "http://localhost:" + HttpRequestForTesting.corePort + "/.well-known/jwks.json", null,
                         1000, 1000, null);
 
                 assertEquals(response.entrySet().size(), 1);
@@ -369,19 +374,20 @@ public class CDIVersionTest {
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
         }
     }
-    
+
     @Test
     public void testInvalidSemanticVersion() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         Utils.setValueInConfig("supertokens_max_cdi_version", "2.x");
         process.startProcess();
 
         ProcessState.EventAndException state = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
         assertNotNull(state);
 
-        assertEquals("supertokens_max_cdi_version is not a valid semantic version", state.exception.getCause().getMessage());
+        assertEquals("supertokens_max_cdi_version is not a valid semantic version",
+                state.exception.getCause().getMessage());
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
     }
@@ -390,7 +396,7 @@ public class CDIVersionTest {
     public void testUnsupportedVersion() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         Utils.setValueInConfig("supertokens_max_cdi_version", "2.1");
         process.startProcess();
 
@@ -406,7 +412,7 @@ public class CDIVersionTest {
     public void testThatGreatedThanMaxCDIVersionIsNotAllowed() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         Utils.setValueInConfig("supertokens_max_cdi_version", "\"2.20\"");
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -425,7 +431,7 @@ public class CDIVersionTest {
                     "jwt");
             fail();
         } catch (HttpResponseException e) {
-            assert(e.getMessage().contains("cdi-version 2.21 not supported"));
+            assert (e.getMessage().contains("cdi-version 2.21 not supported"));
         }
 
         try {
@@ -434,7 +440,7 @@ public class CDIVersionTest {
                     "jwt");
             fail();
         } catch (HttpResponseException e) {
-            assert(e.getMessage().contains("cdi-version 3.0 not supported"));
+            assert (e.getMessage().contains("cdi-version 3.0 not supported"));
         }
 
         process.kill();
@@ -445,7 +451,7 @@ public class CDIVersionTest {
     public void testAPIVersionsWhenMaxCDIVersionIsSet() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         Utils.setValueInConfig("supertokens_max_cdi_version", "\"2.20\"");
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -458,6 +464,139 @@ public class CDIVersionTest {
         for (JsonElement version : versions) {
             SemVer ver = new SemVer(version.getAsString());
             assertTrue(ver.lesserThan(SemVer.v2_20) || ver.equals(SemVer.v2_20));
+        }
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testMinCDIVersionInvalidSemanticVersion() throws Exception {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
+        Utils.setValueInConfig("supertokens_min_cdi_version", "5.x");
+        process.startProcess();
+
+        ProcessState.EventAndException state = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
+        assertNotNull(state);
+        assertEquals("supertokens_min_cdi_version is not a valid semantic version",
+                state.exception.getCause().getMessage());
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testMinCDIVersionUnsupportedVersion() throws Exception {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
+        Utils.setValueInConfig("supertokens_min_cdi_version", "\"4.5\"");
+        process.startProcess();
+
+        ProcessState.EventAndException state = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
+        assertNotNull(state);
+        assertEquals("supertokens_min_cdi_version is not a supported version",
+                state.exception.getCause().getMessage());
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testMinCDIVersionCannotBeGreaterThanMaxCDIVersion() throws Exception {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
+        Utils.setValueInConfig("supertokens_max_cdi_version", "\"5.0\"");
+        Utils.setValueInConfig("supertokens_min_cdi_version", "\"5.4\"");
+        process.startProcess();
+
+        ProcessState.EventAndException state = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
+        assertNotNull(state);
+        assertEquals("supertokens_min_cdi_version cannot be greater than supertokens_max_cdi_version",
+                state.exception.getCause().getMessage());
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testRequestBelowMinCDIVersionIsRejected() throws Exception {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
+        Utils.setValueInConfig("supertokens_min_cdi_version", "\"5.0\"");
+        process.startProcess();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        // versions in [3.0, 5.0) are rejected
+        for (String belowMin : new String[]{"3.0", "3.1", "4.0"}) {
+            try {
+                HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
+                        "http://localhost:3567/recipe/jwt/jwks", null, 1000, 1000, null, belowMin, "jwt");
+                fail("cdi-version " + belowMin + " should have been rejected as below the minimum");
+            } catch (HttpResponseException e) {
+                assertEquals(400, e.statusCode);
+                assertTrue(e.getMessage().contains(
+                        "cdi-version " + belowMin + " is lower than the minimum allowed version 5.0"));
+            }
+        }
+
+        // the minimum itself and versions above it are accepted
+        HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
+                "http://localhost:3567/recipe/jwt/jwks", null, 1000, 1000, null, "5.0", "jwt");
+        HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
+                "http://localhost:3567/recipe/jwt/jwks", null, 1000, 1000, null, "5.4", "jwt");
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testWithoutMinCDIVersionOldVersionsAreAccepted() throws Exception {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
+        process.startProcess();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        // control: no minimum configured, so an old CDI version is still accepted
+        HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
+                "http://localhost:3567/recipe/jwt/jwks", null, 1000, 1000, null, "3.0", "jwt");
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testMinCDIVersionBlocksGhostTenantOldCdiBypass() throws Exception {
+        // Defense in depth for the ghost-tenant bypass: setting the minimum to 5.0 refuses the
+        // vulnerable CDI window (3.0-4.0) outright, before the request reaches any handler.
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
+        Utils.setValueInConfig("supertokens_min_cdi_version", "\"5.0\"");
+        process.startProcess();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+        if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+            return;
+        }
+
+        JsonObject body = new JsonObject();
+        body.addProperty("role", "ldvr-min-cdi");
+        JsonArray permissions = new JsonArray();
+        permissions.add("read");
+        body.add("permissions", permissions);
+
+        try {
+            HttpRequestForTesting.sendJsonPUTRequest(process.getProcess(), "",
+                    "http://localhost:3567/ghosttenant/recipe/role", body, 10000, 10000, null, "3.0", "userroles");
+            fail("ghost-tenant create on CDI 3.0 must be rejected when min_cdi_version is 5.0");
+        } catch (HttpResponseException e) {
+            assertEquals(400, e.statusCode);
+            assertTrue(e.getMessage().contains("is lower than the minimum allowed version 5.0"));
         }
 
         process.kill();

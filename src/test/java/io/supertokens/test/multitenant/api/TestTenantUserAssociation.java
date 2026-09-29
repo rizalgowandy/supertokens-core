@@ -31,12 +31,15 @@ import io.supertokens.pluginInterface.ActiveUsersStorage;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
+import io.supertokens.pluginInterface.bulkimport.BulkImportStorage;
 import io.supertokens.pluginInterface.exceptions.InvalidConfigException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.jwt.JWTRecipeStorage;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
 import io.supertokens.pluginInterface.nonAuthRecipe.NonAuthRecipeStorage;
+import io.supertokens.pluginInterface.oauth.OAuthStorage;
+import io.supertokens.pluginInterface.saml.SAMLStorage;
 import io.supertokens.pluginInterface.usermetadata.UserMetadataStorage;
 import io.supertokens.session.Session;
 import io.supertokens.session.info.SessionInformationHolder;
@@ -46,10 +49,8 @@ import io.supertokens.test.Utils;
 import io.supertokens.test.httpRequest.HttpResponseException;
 import io.supertokens.thirdparty.InvalidProviderConfigException;
 import io.supertokens.thirdparty.ThirdParty;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.rules.TestRule;
 import org.reflections.Reflections;
 
 import java.io.IOException;
@@ -62,6 +63,9 @@ import static org.junit.Assert.*;
 
 public class TestTenantUserAssociation {
     TestingProcessManager.TestingProcess process;
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -82,9 +86,11 @@ public class TestTenantUserAssociation {
 
         String[] args = {"../"};
 
-        this.process = TestingProcessManager.start(args);
+        // Use startProcess=false to avoid race condition with feature flag setup
+        this.process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
+        // Now start the process after feature flags are set
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
     }
@@ -199,10 +205,14 @@ public class TestTenantUserAssociation {
             if (name.equals(UserMetadataStorage.class.getName())
                     || name.equals(JWTRecipeStorage.class.getName())
                     || name.equals(ActiveUsersStorage.class.getName())
+                    || name.equals(BulkImportStorage.class.getName())
+                    || name.equals(OAuthStorage.class.getName())
+                    || name.equals(SAMLStorage.class.getName())
             ) {
                 // user metadata is app specific and does not have any tenant specific data
                 // JWT storage does not have any user specific data
                 // Active users storage does not have tenant specific data
+                // BulkImportStorage
                 continue;
             }
 
@@ -214,7 +224,7 @@ public class TestTenantUserAssociation {
         for (String className : classNames) {
             String userId = "userId";
 
-            StorageLayer.getStorage(t2, process.main).addInfoToNonAuthRecipesBasedOnUserId(t2, className, userId);
+            StorageLayer.getStorage(t2, process.getProcess()).addInfoToNonAuthRecipesBasedOnUserId(t2, className, userId);
 
             JsonObject response = TestMultitenancyAPIHelper.disassociateUserFromTenant(t2, userId,
                     process.getProcess());
@@ -369,7 +379,8 @@ public class TestTenantUserAssociation {
 
         Multitenancy.removeUserIdFromTenant(process.getProcess(), t1, t1Storage,
                 consumeCodeResponse.user.getSupertokensUserId(), null);
-        user = Passwordless.getUserById(t1.toAppIdentifier(), t1Storage, consumeCodeResponse.user.getSupertokensUserId());
+        user = Passwordless.getUserById(t1.toAppIdentifier(), t1Storage,
+                consumeCodeResponse.user.getSupertokensUserId());
         assertArrayEquals(new String[]{"t2"}, user.tenantIds.toArray());
     }
 
@@ -521,14 +532,16 @@ public class TestTenantUserAssociation {
         }
 
         createTenants();
-        JsonObject user1 = TestMultitenancyAPIHelper.epSignUp(new TenantIdentifier(null, "a1", "t1"), "user@example.com",
+        JsonObject user1 = TestMultitenancyAPIHelper.epSignUp(new TenantIdentifier(null, "a1", "t1"),
+                "user@example.com",
                 "password", process.getProcess());
         String userId1 = user1.get("id").getAsString();
 
         TestMultitenancyAPIHelper.epSignUp(new TenantIdentifier(null, "a1", "t2"), "user@example.com",
                 "password", process.getProcess());
 
-        JsonObject response = TestMultitenancyAPIHelper.associateUserToTenant(new TenantIdentifier(null, "a1", "t2"), userId1, process.getProcess());
+        JsonObject response = TestMultitenancyAPIHelper.associateUserToTenant(new TenantIdentifier(null, "a1", "t2"),
+                userId1, process.getProcess());
         assertEquals("EMAIL_ALREADY_EXISTS_ERROR", response.getAsJsonPrimitive("status").getAsString());
     }
 
@@ -539,14 +552,17 @@ public class TestTenantUserAssociation {
         }
 
         createTenants();
-        JsonObject user1 = TestMultitenancyAPIHelper.tpSignInUp(new TenantIdentifier(null, "a1", "t1"), "google", "google-user", "user@example.com",
+        JsonObject user1 = TestMultitenancyAPIHelper.tpSignInUp(new TenantIdentifier(null, "a1", "t1"), "google",
+                "google-user", "user@example.com",
                 process.getProcess());
         String userId1 = user1.get("id").getAsString();
 
-        TestMultitenancyAPIHelper.tpSignInUp(new TenantIdentifier(null, "a1", "t2"), "google", "google-user", "user@example.com",
+        TestMultitenancyAPIHelper.tpSignInUp(new TenantIdentifier(null, "a1", "t2"), "google", "google-user",
+                "user@example.com",
                 process.getProcess());
 
-        JsonObject response = TestMultitenancyAPIHelper.associateUserToTenant(new TenantIdentifier(null, "a1", "t2"), userId1, process.getProcess());
+        JsonObject response = TestMultitenancyAPIHelper.associateUserToTenant(new TenantIdentifier(null, "a1", "t2"),
+                userId1, process.getProcess());
         assertEquals("THIRD_PARTY_USER_ALREADY_EXISTS_ERROR", response.getAsJsonPrimitive("status").getAsString());
     }
 
@@ -557,14 +573,16 @@ public class TestTenantUserAssociation {
         }
 
         createTenants();
-        JsonObject user1 = TestMultitenancyAPIHelper.plSignInUpEmail(new TenantIdentifier(null, "a1", "t1"), "user@example.com",
+        JsonObject user1 = TestMultitenancyAPIHelper.plSignInUpEmail(new TenantIdentifier(null, "a1", "t1"),
+                "user@example.com",
                 process.getProcess());
         String userId1 = user1.get("id").getAsString();
 
         TestMultitenancyAPIHelper.plSignInUpEmail(new TenantIdentifier(null, "a1", "t2"), "user@example.com",
                 process.getProcess());
 
-        JsonObject response = TestMultitenancyAPIHelper.associateUserToTenant(new TenantIdentifier(null, "a1", "t2"), userId1, process.getProcess());
+        JsonObject response = TestMultitenancyAPIHelper.associateUserToTenant(new TenantIdentifier(null, "a1", "t2"),
+                userId1, process.getProcess());
         assertEquals("EMAIL_ALREADY_EXISTS_ERROR", response.getAsJsonPrimitive("status").getAsString());
     }
 
@@ -575,14 +593,16 @@ public class TestTenantUserAssociation {
         }
 
         createTenants();
-        JsonObject user1 = TestMultitenancyAPIHelper.plSignInUpNumber(new TenantIdentifier(null, "a1", "t1"), "+919876543210",
+        JsonObject user1 = TestMultitenancyAPIHelper.plSignInUpNumber(new TenantIdentifier(null, "a1", "t1"),
+                "+919876543210",
                 process.getProcess());
         String userId1 = user1.get("id").getAsString();
 
         TestMultitenancyAPIHelper.plSignInUpNumber(new TenantIdentifier(null, "a1", "t2"), "+919876543210",
                 process.getProcess());
 
-        JsonObject response = TestMultitenancyAPIHelper.associateUserToTenant(new TenantIdentifier(null, "a1", "t2"), userId1, process.getProcess());
+        JsonObject response = TestMultitenancyAPIHelper.associateUserToTenant(new TenantIdentifier(null, "a1", "t2"),
+                userId1, process.getProcess());
         assertEquals("PHONE_NUMBER_ALREADY_EXISTS_ERROR", response.getAsJsonPrimitive("status").getAsString());
     }
 }

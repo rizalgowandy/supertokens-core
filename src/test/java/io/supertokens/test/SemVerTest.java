@@ -27,6 +27,9 @@ public class SemVerTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -39,24 +42,24 @@ public class SemVerTest {
 
     @Test
     public void betweenInclusive() {
-        assert(!SemVer.v2_7.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
-        assert(SemVer.v2_8.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
-        assert(SemVer.v2_9.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
-        assert(SemVer.v2_10.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
-        assert(!SemVer.v2_11.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
+        assert (!SemVer.v2_7.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
+        assert (SemVer.v2_8.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
+        assert (SemVer.v2_9.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
+        assert (SemVer.v2_10.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
+        assert (!SemVer.v2_11.betweenInclusive(SemVer.v2_8, SemVer.v2_10));
     }
 
     @Test
     public void greaterThanOrEqualTo() {
-        assert(!SemVer.v2_7.greaterThanOrEqualTo(SemVer.v2_8));
-        assert(SemVer.v2_8.greaterThanOrEqualTo(SemVer.v2_8));
-        assert(SemVer.v2_9.greaterThanOrEqualTo(SemVer.v2_8));
+        assert (!SemVer.v2_7.greaterThanOrEqualTo(SemVer.v2_8));
+        assert (SemVer.v2_8.greaterThanOrEqualTo(SemVer.v2_8));
+        assert (SemVer.v2_9.greaterThanOrEqualTo(SemVer.v2_8));
     }
 
     @Test
     public void lesserThan() {
-        assert(SemVer.v2_7.lesserThan(SemVer.v2_8));
-        assert(!SemVer.v2_8.lesserThan(SemVer.v2_8));
-        assert(!SemVer.v2_9.lesserThan(SemVer.v2_8));
+        assert (SemVer.v2_7.lesserThan(SemVer.v2_8));
+        assert (!SemVer.v2_8.lesserThan(SemVer.v2_8));
+        assert (!SemVer.v2_9.lesserThan(SemVer.v2_8));
     }
 }

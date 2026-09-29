@@ -17,13 +17,12 @@
 package io.supertokens.test.accountlinking.api;
 
 import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import io.supertokens.Main;
 import io.supertokens.ProcessState;
 import io.supertokens.authRecipe.AuthRecipe;
 import io.supertokens.emailpassword.EmailPassword;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.featureflag.EE_FEATURES;
 import io.supertokens.featureflag.FeatureFlagTestContent;
 import io.supertokens.passwordless.Passwordless;
@@ -57,6 +56,9 @@ import static org.junit.Assert.assertTrue;
 public class UserPaginationTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -138,11 +140,10 @@ public class UserPaginationTest {
     @Test
     public void testUserPaginationResultJson() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -150,28 +151,42 @@ public class UserPaginationTest {
         }
 
         AuthRecipeUserInfo user1 = createEmailPasswordUser(process.getProcess(), "test1@example.com", "password");
+        Thread.sleep(20);
         AuthRecipeUserInfo user2 = createEmailPasswordUser(process.getProcess(), "test2@example.com", "password");
+        Thread.sleep(20);
         AuthRecipeUserInfo user3 = createPasswordlessUserWithEmail(process.getProcess(), "test3@example.com");
+        Thread.sleep(20);
         AuthRecipeUserInfo user4 = createPasswordlessUserWithEmail(process.getProcess(), "test4@example.com");
+        Thread.sleep(20);
         AuthRecipeUserInfo user5 = createPasswordlessUserWithPhone(process.getProcess(), "+1234567890");
+        Thread.sleep(20);
         AuthRecipeUserInfo user6 = createPasswordlessUserWithPhone(process.getProcess(), "+1234567891");
+        Thread.sleep(20);
         AuthRecipeUserInfo user7 = createThirdPartyUser(process.getProcess(), "google", "test7", "test7@example.com");
+        Thread.sleep(20);
         AuthRecipeUserInfo user8 = createThirdPartyUser(process.getProcess(), "google", "test8", "test8@example.com");
 
         {
-            AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId()).user;
-            AuthRecipe.linkAccounts(process.getProcess(), user3.getSupertokensUserId(), primaryUser.getSupertokensUserId());
+            AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                    user1.getSupertokensUserId()).user;
+            AuthRecipe.linkAccounts(process.getProcess(), user3.getSupertokensUserId(),
+                    primaryUser.getSupertokensUserId());
         }
 
         {
-            AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user2.getSupertokensUserId()).user;
-            AuthRecipe.linkAccounts(process.getProcess(), user5.getSupertokensUserId(), primaryUser.getSupertokensUserId());
-            AuthRecipe.linkAccounts(process.getProcess(), user7.getSupertokensUserId(), primaryUser.getSupertokensUserId());
+            AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                    user2.getSupertokensUserId()).user;
+            AuthRecipe.linkAccounts(process.getProcess(), user5.getSupertokensUserId(),
+                    primaryUser.getSupertokensUserId());
+            AuthRecipe.linkAccounts(process.getProcess(), user7.getSupertokensUserId(),
+                    primaryUser.getSupertokensUserId());
         }
 
         {
-            AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user6.getSupertokensUserId()).user;
-            AuthRecipe.linkAccounts(process.getProcess(), user8.getSupertokensUserId(), primaryUser.getSupertokensUserId());
+            AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                    user6.getSupertokensUserId()).user;
+            AuthRecipe.linkAccounts(process.getProcess(), user8.getSupertokensUserId(),
+                    primaryUser.getSupertokensUserId());
         }
 
 
@@ -181,7 +196,7 @@ public class UserPaginationTest {
                 SemVer.v4_0.get(), "");
 
         JsonArray users = response.get("users").getAsJsonArray();
-        assertEquals(4,users.size());
+        assertEquals(4, users.size());
 
         {
             params = new HashMap<>();
@@ -230,11 +245,10 @@ public class UserPaginationTest {
     @Test
     public void testUserPaginationWithManyUsers() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -248,39 +262,38 @@ public class UserPaginationTest {
         Set<String> thirdPartyUsers = new HashSet<>();
 
         // emailpassword users
-        for (int i=0; i < 200; i++) {
-            AuthRecipeUserInfo user = createEmailPasswordUser(process.getProcess(), "epuser" + i  + "@gmail.com", "password" + i);
+        for (int i = 0; i < 200; i++) {
+            AuthRecipeUserInfo user = createEmailPasswordUser(process.getProcess(), "epuser" + i + "@gmail.com",
+                    "password1");
             userInfoMap.put(user.getSupertokensUserId(), user);
             userIds.add(user.getSupertokensUserId());
             emailPasswordUsers.add(user.getSupertokensUserId());
-            Thread.sleep(10);
         }
 
         // passwordless users with email
-        for (int i=0; i < 200; i++) {
-            AuthRecipeUserInfo user = createPasswordlessUserWithEmail(process.getProcess(), "pluser" + i  + "@gmail.com");
+        for (int i = 0; i < 200; i++) {
+            AuthRecipeUserInfo user = createPasswordlessUserWithEmail(process.getProcess(),
+                    "pluser" + i + "@gmail.com");
             userInfoMap.put(user.getSupertokensUserId(), user);
             userIds.add(user.getSupertokensUserId());
             passwordlessUsers.add(user.getSupertokensUserId());
-            Thread.sleep(10);
         }
 
         // passwordless users with phone
-        for (int i=0; i < 200; i++) {
+        for (int i = 0; i < 200; i++) {
             AuthRecipeUserInfo user = createPasswordlessUserWithPhone(process.getProcess(), "+1234567890" + i);
             userInfoMap.put(user.getSupertokensUserId(), user);
             userIds.add(user.getSupertokensUserId());
             passwordlessUsers.add(user.getSupertokensUserId());
-            Thread.sleep(10);
         }
 
         // thirdparty users
-        for (int i=0; i < 200; i++) {
-            AuthRecipeUserInfo user = createThirdPartyUser(process.getProcess(), "google", "tpuser" + i, "tpuser" + i + "@gmail.com");
+        for (int i = 0; i < 200; i++) {
+            AuthRecipeUserInfo user = createThirdPartyUser(process.getProcess(), "google", "tpuser" + i,
+                    "tpuser" + i + "@gmail.com");
             userInfoMap.put(user.getSupertokensUserId(), user);
             userIds.add(user.getSupertokensUserId());
             thirdPartyUsers.add(user.getSupertokensUserId());
-            Thread.sleep(10);
         }
 
         Map<String, String> primaryUserIdMap = new HashMap<>();
@@ -292,7 +305,7 @@ public class UserPaginationTest {
             int numAccountsToLink = Math.min(rand.nextInt(3) + 1, userIds.size());
             List<String> userIdsToLink = new ArrayList<>();
 
-            for (int i=0; i < numAccountsToLink; i++) {
+            for (int i = 0; i < numAccountsToLink; i++) {
                 String[] userIdsArray = userIds.toArray(new String[0]);
                 String userId = userIdsArray[rand.nextInt(userIds.size())];
                 userIdsToLink.add(userId);
@@ -304,17 +317,20 @@ public class UserPaginationTest {
             }
 
             if (userIdsToLink.size() > 1) {
-                AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), userIdsToLink.get(0)).user;
+                AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                        userIdsToLink.get(0)).user;
                 primaryUserIds.add(primaryUser.getSupertokensUserId());
 
-                for (int i=1; i < userIdsToLink.size(); i++) {
-                    AuthRecipe.linkAccounts(process.getProcess(), userIdsToLink.get(i), primaryUser.getSupertokensUserId());
+                for (int i = 1; i < userIdsToLink.size(); i++) {
+                    AuthRecipe.linkAccounts(process.getProcess(), userIdsToLink.get(i),
+                            primaryUser.getSupertokensUserId());
                 }
             } else {
                 primaryUserIds.add(userIdsToLink.get(0));
             }
+            Thread.sleep(10);
         }
-        
+
         // Pagination tests
         {
             JsonArray usersResult = getUsersFromAllPages(process.getProcess(), 10, null);
@@ -350,7 +366,8 @@ public class UserPaginationTest {
             assertEquals(primaryUsers.size(), usersResult.size());
         }
         {
-            JsonArray usersResult = getUsersFromAllPages(process.getProcess(), 20, new String[]{"emailpassword", "passwordless"});
+            JsonArray usersResult = getUsersFromAllPages(process.getProcess(), 20,
+                    new String[]{"emailpassword", "passwordless"});
             Set<String> primaryUsers = new HashSet<>();
             for (String userId : emailPasswordUsers) {
                 primaryUsers.add(primaryUserIdMap.get(userId));
@@ -362,7 +379,8 @@ public class UserPaginationTest {
             assertEquals(primaryUsers.size(), usersResult.size());
         }
         {
-            JsonArray usersResult = getUsersFromAllPages(process.getProcess(), 20, new String[]{"thirdparty", "passwordless"});
+            JsonArray usersResult = getUsersFromAllPages(process.getProcess(), 20,
+                    new String[]{"thirdparty", "passwordless"});
             Set<String> primaryUsers = new HashSet<>();
             for (String userId : thirdPartyUsers) {
                 primaryUsers.add(primaryUserIdMap.get(userId));
@@ -374,7 +392,8 @@ public class UserPaginationTest {
             assertEquals(primaryUsers.size(), usersResult.size());
         }
         {
-            JsonArray usersResult = getUsersFromAllPages(process.getProcess(), 20, new String[]{"thirdparty", "passwordless", "emailpassword"});
+            JsonArray usersResult = getUsersFromAllPages(process.getProcess(), 20,
+                    new String[]{"thirdparty", "passwordless", "emailpassword"});
             assertEquals(primaryUserIds.size(), usersResult.size());
         }
 
@@ -385,11 +404,10 @@ public class UserPaginationTest {
     @Test
     public void testUserPaginationFromOldVersion() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -403,7 +421,8 @@ public class UserPaginationTest {
         AuthRecipeUserInfo user3 = createPasswordlessUserWithEmail(process.getProcess(), "test@example.com");
         Thread.sleep(50);
 
-        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user2.getSupertokensUserId()).user;
+        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                user2.getSupertokensUserId()).user;
         AuthRecipe.linkAccounts(process.getProcess(), user1.getSupertokensUserId(), primaryUser.getSupertokensUserId());
         AuthRecipe.linkAccounts(process.getProcess(), user3.getSupertokensUserId(), primaryUser.getSupertokensUserId());
 

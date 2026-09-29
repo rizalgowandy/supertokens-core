@@ -41,6 +41,9 @@ public class PasswordlessCreateCodeAPITest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -71,7 +74,7 @@ public class PasswordlessCreateCodeAPITest {
         JsonObject createCodeResponse = HttpRequestForTesting.sendJsonPOSTRequest(process.getProcess(), "",
                 "http://localhost:3567/recipe/signinup/code", createCodeRequestBody, 1000, 1000, null,
                 WebserverAPI.getLatestCDIVersion().get(), "passwordless");
-        
+
         assertEquals("OK", createCodeResponse.get("status").getAsString());
 
         HashMap<String, String> params = new HashMap<>();

@@ -65,6 +65,8 @@ then
 	exit 1
 fi
 
+mkdir -p ~/junit
+
 someTestsRan=false
 while read -u 10 line
 do
@@ -134,9 +136,10 @@ do
           cd ../../
           git clone git@github.com:supertokens/supertokens-root.git
           cd supertokens-root
+          rm gradle.properties
 
-          update-alternatives --install "/usr/bin/java" "java" "/usr/java/jdk-15.0.1/bin/java" 2
-          update-alternatives --install "/usr/bin/javac" "javac" "/usr/java/jdk-15.0.1/bin/javac" 2
+          update-alternatives --install "/usr/bin/java" "java" "/usr/java/jdk-21.0.7/bin/java" 2
+          update-alternatives --install "/usr/bin/javac" "javac" "/usr/java/jdk-21.0.7/bin/javac" 2
 
           coreX=$(cut -d'.' -f1 <<<"$coreVersion")
           coreY=$(cut -d'.' -f2 <<<"$coreVersion")
@@ -161,9 +164,24 @@ do
           fi
           cd ../
           echo $SUPERTOKENS_API_KEY > apiPassword
+
           ./startTestingEnv --cicd
 
-          if [[ $? -ne 0 ]]
+          TEST_EXIT_CODE=$?
+
+          if [ -d ~/junit ]
+          then
+            echo "Copying output from core"
+            cp ~/supertokens-root/supertokens-core/build/test-results/test/*.xml ~/junit/
+
+            if [[ $pluginToTest != "sqlite" ]]
+            then
+              echo "Copying output from plugin"
+              cp ~/supertokens-root/supertokens-$pluginToTest-plugin/build/test-results/test/*.xml ~/junit/
+            fi
+          fi
+
+          if [[ $TEST_EXIT_CODE -ne 0 ]]
           then
               echo ""
               echo ""
@@ -195,7 +213,7 @@ do
           echo ""
           echo ""
 
-          cd ../
+          cd ..
           rm -rf supertokens-root
 
           if [[ $currPinnedDb == "sqlite" ]]

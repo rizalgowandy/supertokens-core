@@ -43,6 +43,9 @@ public class ThirdPartyAPITest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -55,7 +58,7 @@ public class ThirdPartyAPITest {
 
     @Test
     public void testSignInAPI() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -68,18 +71,18 @@ public class ThirdPartyAPITest {
         String thirdPartyId = "google";
         String thirdPartyUserId = "test-google";
         String email = "test@example.com";
-        ThirdParty.SignInUpResponse signInUpResponse = ThirdParty.signInUp(process.main, thirdPartyId, thirdPartyUserId,
+        ThirdParty.SignInUpResponse signInUpResponse = ThirdParty.signInUp(process.getProcess(), thirdPartyId, thirdPartyUserId,
                 email);
         String superTokensUserId = signInUpResponse.user.getSupertokensUserId();
         String externalUserId = "externalId";
 
         // create the mapping
-        UserIdMapping.createUserIdMapping(process.main, superTokensUserId, externalUserId, null, false);
+        UserIdMapping.createUserIdMapping(process.getProcess(), superTokensUserId, externalUserId, null, false);
 
         // check that mapping exists
         {
             io.supertokens.pluginInterface.useridmapping.UserIdMapping response = UserIdMapping
-                    .getUserIdMapping(process.main, superTokensUserId, UserIdType.SUPERTOKENS);
+                    .getUserIdMapping(process.getProcess(), superTokensUserId, UserIdType.SUPERTOKENS);
             assertNotNull(response);
             assertEquals(response.superTokensUserId, superTokensUserId);
             assertEquals(response.externalUserId, externalUserId);
@@ -103,9 +106,9 @@ public class ThirdPartyAPITest {
 
         // delete User and check that the mapping no longer exists
         {
-            AuthRecipe.deleteUser(process.main, superTokensUserId);
+            AuthRecipe.deleteUser(process.getProcess(), superTokensUserId);
             io.supertokens.pluginInterface.useridmapping.UserIdMapping response = UserIdMapping
-                    .getUserIdMapping(process.main, superTokensUserId, UserIdType.SUPERTOKENS);
+                    .getUserIdMapping(process.getProcess(), superTokensUserId, UserIdType.SUPERTOKENS);
             assertNull(response);
         }
 
@@ -115,7 +118,7 @@ public class ThirdPartyAPITest {
 
     @Test
     public void testGetUsersByEmailAPI() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -128,13 +131,13 @@ public class ThirdPartyAPITest {
         String thirdPartyId = "google";
         String thirdPartyUserId = "test-google";
         String email = "test@example.com";
-        ThirdParty.SignInUpResponse signInUpResponse = ThirdParty.signInUp(process.main, thirdPartyId, thirdPartyUserId,
+        ThirdParty.SignInUpResponse signInUpResponse = ThirdParty.signInUp(process.getProcess(), thirdPartyId, thirdPartyUserId,
                 email);
         String superTokensUserId = signInUpResponse.user.getSupertokensUserId();
         String externalUserId = "externalId";
 
         // create the mapping
-        UserIdMapping.createUserIdMapping(process.main, superTokensUserId, externalUserId, null, false);
+        UserIdMapping.createUserIdMapping(process.getProcess(), superTokensUserId, externalUserId, null, false);
 
         // call getUsersByEmail
         {
@@ -157,7 +160,7 @@ public class ThirdPartyAPITest {
 
     @Test
     public void testGetUserById() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -170,13 +173,13 @@ public class ThirdPartyAPITest {
         String thirdPartyId = "google";
         String thirdPartyUserId = "test-google";
         String email = "test@example.com";
-        ThirdParty.SignInUpResponse signInUpResponse = ThirdParty.signInUp(process.main, thirdPartyId, thirdPartyUserId,
+        ThirdParty.SignInUpResponse signInUpResponse = ThirdParty.signInUp(process.getProcess(), thirdPartyId, thirdPartyUserId,
                 email);
         String superTokensUserId = signInUpResponse.user.getSupertokensUserId();
         String externalUserId = "externalId";
 
         // create the mapping
-        UserIdMapping.createUserIdMapping(process.main, superTokensUserId, externalUserId, null, false);
+        UserIdMapping.createUserIdMapping(process.getProcess(), superTokensUserId, externalUserId, null, false);
 
         // get User with Id
         {
@@ -198,7 +201,7 @@ public class ThirdPartyAPITest {
 
     @Test
     public void testGetUserByThirdPartyId() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -211,13 +214,13 @@ public class ThirdPartyAPITest {
         String thirdPartyId = "google";
         String thirdPartyUserId = "test-google";
         String email = "test@example.com";
-        ThirdParty.SignInUpResponse signInUpResponse = ThirdParty.signInUp(process.main, thirdPartyId, thirdPartyUserId,
+        ThirdParty.SignInUpResponse signInUpResponse = ThirdParty.signInUp(process.getProcess(), thirdPartyId, thirdPartyUserId,
                 email);
         String superTokensUserId = signInUpResponse.user.getSupertokensUserId();
         String externalUserId = "externalId";
 
         // create the mapping
-        UserIdMapping.createUserIdMapping(process.main, superTokensUserId, externalUserId, null, false);
+        UserIdMapping.createUserIdMapping(process.getProcess(), superTokensUserId, externalUserId, null, false);
 
         // get User with Id
         {

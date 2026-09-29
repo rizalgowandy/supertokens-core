@@ -39,6 +39,9 @@ public class TelemetryAPITest2_7 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -51,9 +54,9 @@ public class TelemetryAPITest2_7 {
 
     @Test
     public void testTelemetryDisabledInMemDb() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (!Version.getVersion(process.getProcess()).getPluginName().equals("sqlite")) {
@@ -71,9 +74,9 @@ public class TelemetryAPITest2_7 {
 
     @Test
     public void testDefaultTelemetry() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (Version.getVersion(process.getProcess()).getPluginName().equals("sqlite")) {
@@ -93,9 +96,9 @@ public class TelemetryAPITest2_7 {
     @Test
     public void testDisableTelemetry() throws Exception {
         Utils.setValueInConfig("disable_telemetry", "true");
-        String[] args = { "../" };
+        String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (Version.getVersion(process.getProcess()).getPluginName().equals("sqlite")) {
@@ -114,9 +117,9 @@ public class TelemetryAPITest2_7 {
     @Test
     public void testEnableTelemetry() throws Exception {
         Utils.setValueInConfig("disable_telemetry", "false");
-        String[] args = { "../" };
+        String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (Version.getVersion(process.getProcess()).getPluginName().equals("sqlite")) {

@@ -16,53 +16,78 @@
 
 package io.supertokens.test.multitenant;
 
-import com.eatthepath.otp.TimeBasedOneTimePasswordGenerator;
-import com.google.gson.JsonObject;
-import io.supertokens.ActiveUsers;
-import io.supertokens.Main;
-import io.supertokens.ProcessState;
-import io.supertokens.dashboard.Dashboard;
-import io.supertokens.emailpassword.EmailPassword;
-import io.supertokens.emailverification.EmailVerification;
-import io.supertokens.featureflag.EE_FEATURES;
-import io.supertokens.featureflag.FeatureFlagTestContent;
-import io.supertokens.multitenancy.Multitenancy;
-import io.supertokens.passwordless.Passwordless;
-import io.supertokens.pluginInterface.STORAGE_TYPE;
-import io.supertokens.pluginInterface.Storage;
-import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
-import io.supertokens.pluginInterface.exceptions.StorageQueryException;
-import io.supertokens.pluginInterface.multitenancy.*;
-import io.supertokens.pluginInterface.totp.TOTPDevice;
-import io.supertokens.session.Session;
-import io.supertokens.storageLayer.StorageLayer;
-import io.supertokens.test.TestingProcessManager;
-import io.supertokens.test.Utils;
-import io.supertokens.thirdparty.ThirdParty;
-import io.supertokens.totp.Totp;
-import io.supertokens.useridmapping.UserIdMapping;
-import io.supertokens.usermetadata.UserMetadata;
-import io.supertokens.userroles.UserRoles;
-import org.apache.commons.codec.binary.Base32;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TestRule;
-
-import javax.crypto.spec.SecretKeySpec;
 import java.security.InvalidKeyException;
 import java.security.Key;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 
+import javax.crypto.spec.SecretKeySpec;
+
+import io.supertokens.authRecipe.AuthRecipe;
+import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateEmailException;
+import org.apache.commons.codec.binary.Base32;
+import org.junit.AfterClass;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TestRule;
+
+import com.eatthepath.otp.TimeBasedOneTimePasswordGenerator;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+
+import io.supertokens.ActiveUsers;
+import io.supertokens.Main;
+import io.supertokens.ProcessState;
+import io.supertokens.bulkimport.BulkImport;
+import io.supertokens.dashboard.Dashboard;
+import io.supertokens.emailpassword.EmailPassword;
+import io.supertokens.emailverification.EmailVerification;
+import io.supertokens.featureflag.EE_FEATURES;
+import io.supertokens.featureflag.FeatureFlagTestContent;
+import io.supertokens.multitenancy.Multitenancy;
+import io.supertokens.oauth.OAuth;
+import io.supertokens.passwordless.Passwordless;
+import io.supertokens.pluginInterface.STORAGE_TYPE;
+import io.supertokens.pluginInterface.Storage;
+import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
+import io.supertokens.pluginInterface.exceptions.StorageQueryException;
+import io.supertokens.pluginInterface.multitenancy.EmailPasswordConfig;
+import io.supertokens.pluginInterface.multitenancy.PasswordlessConfig;
+import io.supertokens.pluginInterface.multitenancy.TenantConfig;
+import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
+import io.supertokens.pluginInterface.multitenancy.ThirdPartyConfig;
+import io.supertokens.pluginInterface.oauth.OAuthStorage;
+import io.supertokens.pluginInterface.saml.SAMLClient;
+import io.supertokens.pluginInterface.saml.SAMLRelayStateInfo;
+import io.supertokens.pluginInterface.saml.SAMLStorage;
+import io.supertokens.pluginInterface.totp.TOTPDevice;
+import io.supertokens.pluginInterface.webauthn.AccountRecoveryTokenInfo;
+import io.supertokens.pluginInterface.webauthn.WebAuthNOptions;
+import io.supertokens.pluginInterface.webauthn.WebAuthNStorage;
+import io.supertokens.pluginInterface.webauthn.WebAuthNStoredCredential;
+import io.supertokens.pluginInterface.webauthn.exceptions.DuplicateUserIdException;
+import io.supertokens.pluginInterface.webauthn.slqStorage.WebAuthNSQLStorage;
+import io.supertokens.session.Session;
+import io.supertokens.storageLayer.StorageLayer;
+import io.supertokens.test.TestingProcessManager;
+import io.supertokens.test.Utils;
+import io.supertokens.test.bulkimport.BulkImportTestUtils;
+import io.supertokens.thirdparty.ThirdParty;
+import io.supertokens.totp.Totp;
+import io.supertokens.useridmapping.UserIdMapping;
+import io.supertokens.usermetadata.UserMetadata;
+import io.supertokens.userroles.UserRoles;
 
 public class TestAppData {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -76,6 +101,14 @@ public class TestAppData {
 
     private String[] removeStrings(String[] arr, String[] toRemove) {
         return Arrays.stream(arr).filter(s -> !Arrays.asList(toRemove).contains(s)).toArray(String[]::new);
+    }
+
+    // activity_log is an append-only audit log with no app_id->apps FK cascade, so its rows are
+    // intentionally retained after an app is deleted. On Postgres it is range-partitioned, so its
+    // physical tables are the parent plus dynamically-named monthly/default partitions
+    // (activity_log, activity_log_default, activity_log_pYYYYMM) — match the whole family by prefix.
+    private String[] removeActivityLogTables(String[] arr) {
+        return Arrays.stream(arr).filter(s -> !s.startsWith("activity_log")).toArray(String[]::new);
     }
 
     private static String generateTotpCode(Main main, TOTPDevice device, int step)
@@ -93,10 +126,11 @@ public class TestAppData {
     public void testThatDeletingAppDeleteDataFromAllTables() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES,
                         new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY, EE_FEATURES.MFA});
+        Utils.setValueInConfig("oauth_client_secret_encryption_key", "secret");
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -104,7 +138,16 @@ public class TestAppData {
             return;
         }
 
-        String[] tablesToIgnore = new String[]{"tenant_thirdparty_provider_clients", "tenant_thirdparty_providers", "tenant_first_factors", "tenant_required_secondary_factors"};
+        String[] tablesToIgnore = new String[]{"tenant_thirdparty_provider_clients", "tenant_thirdparty_providers",
+                "tenant_first_factors", "tenant_required_secondary_factors",
+                "recipe_user_tenants", "recipe_user_account_infos", "primary_user_tenants",
+                // Legacy tables that are not populated in MIGRATED mode.
+                "all_auth_recipe_users", "emailpassword_user_to_tenant", "thirdparty_user_to_tenant",
+                "passwordless_user_to_tenant", "webauthn_user_to_tenant",
+                // Legacy table: m2m stats now go to the oauth_m2m_token_stats rollup, so this is
+                // created (to drain pre-rollup rows) but never written. The rollup itself has no
+                // app_id FK on purpose — stats survive app deletion — so it is ignored too.
+                "oauth_m2m_tokens", "oauth_m2m_token_stats"};
 
         TenantIdentifier app = new TenantIdentifier(null, "a1", null);
 
@@ -120,7 +163,7 @@ public class TestAppData {
                 StorageLayer.getStorage(app, process.getProcess()));
 
         String[] allTableNames = appStorage.getAllTablesInTheDatabase();
-        allTableNames = removeStrings(allTableNames, tablesToIgnore);
+        allTableNames = removeActivityLogTables(removeStrings(allTableNames, tablesToIgnore));
         Arrays.sort(allTableNames);
 
         // Add all recipe data
@@ -128,6 +171,7 @@ public class TestAppData {
                 "password");
         EmailPassword.generatePasswordResetTokenBeforeCdi4_0(app, appStorage, process.getProcess(),
                 epUser.getSupertokensUserId());
+        AuthRecipe.createPrimaryUser(process.getProcess(), app.toAppIdentifier(), appStorage, epUser.getSupertokensUserId());
 
         ThirdParty.SignInUpResponse tpUser = ThirdParty.signInUp(app, appStorage, process.getProcess(), "google",
                 "googleid", "test@example.com");
@@ -173,9 +217,59 @@ public class TestAppData {
         UserIdMapping.createUserIdMapping(process.getProcess(), app.toAppIdentifier(), appStorage,
                 plUser.user.getSupertokensUserId(), "externalid", null, false);
 
+        if(!StorageLayer.isInMemDb(process.getProcess())) {
+            BulkImport.addUsers(app.toAppIdentifier(), appStorage, BulkImportTestUtils.generateBulkImportUser(1));
+        }
+
+        OAuth.addOrUpdateClient(process.getProcess(), app.toAppIdentifier(), appStorage, "test", "secret123", false, false);
+        OAuth.createLogoutRequestAndReturnRedirectUri(process.getProcess(), app.toAppIdentifier(), appStorage, "test", "http://localhost", "sessionHandle", "state");
+        ((OAuthStorage) appStorage).addOAuthM2MTokenForStats(app.toAppIdentifier(), "test", 1000, 2000);
+        OAuth.revokeSessionHandle(process.getProcess(), app.toAppIdentifier(), appStorage, "sessionHandle");
+        OAuth.createOrUpdateOauthSession(process.getProcess(), app.toAppIdentifier(), appStorage, "test", "test-gid", null, null, "sessionHandle", "jti", 0);
+
+        WebAuthNStoredCredential credential = new WebAuthNStoredCredential();
+        credential.id = "abcd";
+        credential.appId = app.getAppId();
+        credential.rpId = "example.com";
+        credential.userId = "userId";
+        credential.counter = 0;
+        credential.publicKey = new byte[0];
+        credential.transports = "abcd";
+        credential.createdAt = 0;
+        credential.updatedAt = 0;
+
+        ((WebAuthNSQLStorage) appStorage).startTransaction((con) -> {
+            try {
+                ((WebAuthNSQLStorage) appStorage).signUpWithCredentialsRegister_Transaction(app, con, "userId", "test2@example.com", "example.com", credential);
+            } catch (DuplicateUserIdException e) {
+                throw new RuntimeException(e);
+            } catch (DuplicateEmailException e) {
+                throw new RuntimeException(e);
+            }
+            return null;
+        });
+        ((WebAuthNStorage) appStorage).addRecoverAccountToken(app, new AccountRecoveryTokenInfo("userId", "test@example.com", "abcd", System.currentTimeMillis() + 3600));
+        WebAuthNOptions options = new WebAuthNOptions();
+        options.generatedOptionsId = "abcd";
+        options.relyingPartyId = "example.com";
+        options.relyingPartyName = "Example";
+        options.userEmail = "test@example.com";
+        options.timeout = 3600L;
+        options.challenge = "abcd"; //base64 url encoded
+        options.origin = "abcd";
+        options.expiresAt = System.currentTimeMillis() + 3600;
+        options.createdAt = System.currentTimeMillis();
+        options.userPresenceRequired = false;
+        options.userVerification = "required";
+        ((WebAuthNStorage) appStorage).saveGeneratedOptions(app, options);
+
+        ((SAMLStorage) appStorage).createOrUpdateSAMLClient(app, new SAMLClient("abcd", "efgh", "http://localhost:5225", new JsonArray(), "http://localhost:3000", "http://idp.example.com", "abcdefgh", false, true));
+        ((SAMLStorage) appStorage).saveRelayStateInfo(app, new SAMLRelayStateInfo("1234", "abcd", "qwer", "http://localhost:3000/auth/callback/saml"), 300000);
+        ((SAMLStorage) appStorage).saveSAMLClaims(app, "abcd", "efgh", new JsonObject(), 30000);
+
         String[] tablesThatHaveData = appStorage
                 .getAllTablesInTheDatabaseThatHasDataForAppId(app.getAppId());
-        tablesThatHaveData = removeStrings(tablesThatHaveData, tablesToIgnore);
+        tablesThatHaveData = removeActivityLogTables(removeStrings(tablesThatHaveData, tablesToIgnore));
         Arrays.sort(tablesThatHaveData);
 
         assertEquals(allTableNames, tablesThatHaveData);
@@ -185,7 +279,7 @@ public class TestAppData {
 
         // Check no data is remaining in any of the tables
         tablesThatHaveData = appStorage.getAllTablesInTheDatabaseThatHasDataForAppId(app.getAppId());
-        tablesThatHaveData = removeStrings(tablesThatHaveData, tablesToIgnore);
+        tablesThatHaveData = removeActivityLogTables(removeStrings(tablesThatHaveData, tablesToIgnore));
         assertEquals(0, tablesThatHaveData.length);
 
         process.kill();

@@ -7,7 +7,7 @@ import io.supertokens.featureflag.exceptions.FeatureNotEnabledException;
 import io.supertokens.multitenancy.exception.BadPermissionException;
 import io.supertokens.pluginInterface.RECIPE_ID;
 import io.supertokens.pluginInterface.Storage;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
@@ -76,8 +76,9 @@ public class ImportTotpDeviceAPI extends WebserverAPI {
 
             // Try to find the appIdentifier with right storage based on the userId
             try {
-                StorageAndUserIdMapping mappingAndStorage = enforcePublicTenantAndGetStorageAndUserIdMappingForAppSpecificApi(
-                        req, userId, UserIdType.ANY, false);
+                StorageAndUserIdMapping mappingAndStorage =
+                        enforcePublicTenantAndGetStorageAndUserIdMappingForAppSpecificApi(
+                                req, userId, UserIdType.ANY, false);
                 storage = mappingAndStorage.storage;
             } catch (UnknownUserIdException e) {
                 throw new IllegalStateException("should never happen");
@@ -93,7 +94,7 @@ public class ImportTotpDeviceAPI extends WebserverAPI {
             result.addProperty("status", "DEVICE_ALREADY_EXISTS_ERROR");
             super.sendJsonResponse(200, result, resp);
         } catch (StorageQueryException | FeatureNotEnabledException |
-                TenantOrAppNotFoundException | BadPermissionException e) {
+                 TenantOrAppNotFoundException | BadPermissionException e) {
             throw new ServletException(e);
         }
     }

@@ -68,7 +68,8 @@ public class ProcessState extends ResourceDistributor.SingletonResource {
     /**
      * INIT: Initialization started INIT_FAILURE: Initialization failed
      * STARTED: Initialized successfully SHUTTING_DOWN: Shut down signal received STOPPED
-     * RETRYING_ACCESS_TOKEN_JWT_VERIFICATION: When access token verification fails due to change in signing key, so we retry it
+     * RETRYING_ACCESS_TOKEN_JWT_VERIFICATION: When access token verification fails due to change in signing key, so
+     * we retry it
      * CRON_TASK_ERROR_LOGGING: When an exception is thrown from a Cronjob
      * DEVICE_DRIVER_INFO_LOGGED:When program is saving deviceDriverInfo into ping
      * SERVER_PING: When program is pinging the server with information
@@ -97,13 +98,25 @@ public class ProcessState extends ResourceDistributor.SingletonResource {
         PASSWORD_HASH_BCRYPT, PASSWORD_HASH_ARGON, PASSWORD_VERIFY_BCRYPT, PASSWORD_VERIFY_ARGON,
         PASSWORD_VERIFY_FIREBASE_SCRYPT, ADDING_REMOTE_ADDRESS_FILTER, LICENSE_KEY_CHECK_NETWORK_CALL,
         INVALID_LICENSE_KEY, SERVER_ERROR_DURING_LICENSE_KEY_CHECK_FAIL, LOADING_ALL_TENANT_CONFIG,
-        LOADING_ALL_TENANT_STORAGE, TENANTS_CHANGED_DURING_REFRESH_FROM_DB
+        LOADING_ALL_TENANT_STORAGE, TENANTS_CHANGED_DURING_REFRESH_FROM_DB,
+        // Storage.verifySchema() found missing tables/columns for a storage (base or tenant). The core
+        // keeps running; only queries touching the missing schema fail, with a schema-mismatch hint.
+        SCHEMA_MISMATCH,
+        BULK_IMPORT_COMPLETE,
+        BULK_IMPORT_SKIPPED_EMPTY_QUEUE,
+        BACKFILL_COMPLETE,
+        // CDI >= 5.6 refresh-time rotation (PLAN-002): a grace-window re-rotation was served, and a
+        // refresh-token reuse was detected and the session revoked, respectively.
+        REFRESH_TOKEN_GRACE_PERIOD_HIT,
+        REFRESH_TOKEN_REUSE_DETECTED,
+        APPROXIMATE_USER_COUNT_REFRESH_COMPLETED,
+        APPROXIMATE_USER_COUNT_REFRESH_FAILED
     }
 
     public static class EventAndException {
         public Exception exception;
         public JsonObject data;
-        PROCESS_STATE state;
+        public PROCESS_STATE state;
 
         public EventAndException(PROCESS_STATE state, Exception e) {
             this.state = state;

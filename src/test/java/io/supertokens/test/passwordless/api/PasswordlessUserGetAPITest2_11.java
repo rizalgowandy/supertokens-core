@@ -47,6 +47,9 @@ public class PasswordlessUserGetAPITest2_11 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -59,7 +62,7 @@ public class PasswordlessUserGetAPITest2_11 {
 
     @Test
     public void testBadInput() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -155,7 +158,7 @@ public class PasswordlessUserGetAPITest2_11 {
 
     @Test
     public void testGoodInput() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -173,7 +176,7 @@ public class PasswordlessUserGetAPITest2_11 {
         String email = "random@gmail.com";
         String phoneNumber = "1234";
 
-        storage.createUser(new TenantIdentifier(null, null, null),
+        storage.createUser(process.getAppForTesting(),
                 userIdEmail, email, null, System.currentTimeMillis());
         {
             HashMap<String, String> map = new HashMap<>();
@@ -199,7 +202,7 @@ public class PasswordlessUserGetAPITest2_11 {
         /*
          * get user with phone number
          */
-        storage.createUser(new TenantIdentifier(null, null, null),
+        storage.createUser(process.getAppForTesting(),
                 userIdPhone, null, phoneNumber, System.currentTimeMillis());
         {
             HashMap<String, String> map = new HashMap<>();
@@ -250,7 +253,8 @@ public class PasswordlessUserGetAPITest2_11 {
         }
 
         AuthRecipeUserInfo user1 = EmailPassword.signUp(process.getProcess(), "test@example.com", "password");
-        AuthRecipeUserInfo user2 = ThirdParty.signInUp(process.getProcess(), "google", "googleid", "test@example.com").user;
+        AuthRecipeUserInfo user2 = ThirdParty.signInUp(process.getProcess(), "google", "googleid",
+                "test@example.com").user;
 
         {
             HashMap<String, String> map = new HashMap<>();

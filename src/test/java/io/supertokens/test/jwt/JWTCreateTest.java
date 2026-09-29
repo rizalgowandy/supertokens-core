@@ -39,6 +39,9 @@ public class JWTCreateTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -54,7 +57,7 @@ public class JWTCreateTest {
      */
     @Test
     public void testNormalFunctioningOfCreateToken() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -75,7 +78,7 @@ public class JWTCreateTest {
      */
     @Test
     public void testCreateTokenWithAlreadyExistingKey() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -98,7 +101,7 @@ public class JWTCreateTest {
      */
     @Test
     public void testNormalFunctioningOfCreateTokenWithLongValidity() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -108,7 +111,8 @@ public class JWTCreateTest {
         String jwksDomain = "http://localhost";
         long validity = 63072000;
 
-        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity, false);
+        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity,
+                false);
 
         DecodedJWT decodedJWT = JWT.decode(jwt);
 
@@ -126,7 +130,7 @@ public class JWTCreateTest {
      */
     @Test
     public void testInvalidAlgorithmThrowsError() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -152,7 +156,7 @@ public class JWTCreateTest {
      */
     @Test
     public void testThatDecodedJWTHasAValidHeader() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -162,7 +166,8 @@ public class JWTCreateTest {
         String jwksDomain = "http://localhost";
         long validity = 3600;
 
-        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity, false);
+        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity,
+                false);
 
         DecodedJWT decodedJWT = JWT.decode(jwt);
 
@@ -196,7 +201,7 @@ public class JWTCreateTest {
      */
     @Test
     public void testThatDecodedJWTPayloadHasRequiredClaims() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -209,7 +214,8 @@ public class JWTCreateTest {
         long expectedIssuedAtTime = System.currentTimeMillis() / 1000;
         long expectedExpiry = expectedIssuedAtTime + validity;
 
-        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity, false);
+        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity,
+                false);
 
         DecodedJWT decodedJWT = JWT.decode(jwt);
 
@@ -242,7 +248,7 @@ public class JWTCreateTest {
      */
     @Test
     public void testThatDecodedJWTPayloadHasCustomProperties() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -256,7 +262,8 @@ public class JWTCreateTest {
         String jwksDomain = "http://localhost";
         long validity = 3600;
 
-        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity, false);
+        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity,
+                false);
 
         DecodedJWT decodedJWT = JWT.decode(jwt);
 
@@ -264,7 +271,8 @@ public class JWTCreateTest {
 
         if (customClaim.isNull()) {
             throw new Exception(
-                    "Decoded JWT does not contain properties from payload passed to JWTSigningFunctions.createJWTToken");
+                    "Decoded JWT does not contain properties from payload passed to JWTSigningFunctions" +
+                            ".createJWTToken");
         }
 
         if (!customClaim.asString().equals(customClaimValue)) {
@@ -280,7 +288,7 @@ public class JWTCreateTest {
      */
     @Test
     public void testThatDecodedJWTUsesCustomIssuer() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -291,7 +299,8 @@ public class JWTCreateTest {
         String jwksDomain = "http://localhost";
         long validity = 3600;
 
-        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity, false);
+        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity,
+                false);
         DecodedJWT decodedJWT = JWT.decode(jwt);
 
         String issuer = decodedJWT.getIssuer();

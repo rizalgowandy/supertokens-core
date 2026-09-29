@@ -20,7 +20,7 @@ import io.supertokens.Main;
 import io.supertokens.ProcessState;
 import io.supertokens.authRecipe.AuthRecipe;
 import io.supertokens.emailpassword.EmailPassword;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.featureflag.EE_FEATURES;
 import io.supertokens.featureflag.FeatureFlagTestContent;
 import io.supertokens.passwordless.Passwordless;
@@ -53,6 +53,9 @@ import static org.junit.Assert.*;
 public class GetUserByIdTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -97,11 +100,10 @@ public class GetUserByIdTest {
     @Test
     public void testAllLoginMethods() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -129,19 +131,21 @@ public class GetUserByIdTest {
         assertEquals(RECIPE_ID.EMAIL_PASSWORD, userToTest.loginMethods[0].recipeId);
         assertEquals(user1.getSupertokensUserId(), userToTest.loginMethods[0].getSupertokensUserId());
         assertFalse(userToTest.loginMethods[0].verified);
-        assert(userToTest.loginMethods[0].timeJoined > 0);
+        assert (userToTest.loginMethods[0].timeJoined > 0);
 
         assertEquals(user1, AuthRecipe.getUserById(process.getProcess(), user1.getSupertokensUserId()));
         assertEquals(user2, AuthRecipe.getUserById(process.getProcess(), user2.getSupertokensUserId()));
         assertEquals(user3, AuthRecipe.getUserById(process.getProcess(), user3.getSupertokensUserId()));
         assertEquals(user4, AuthRecipe.getUserById(process.getProcess(), user4.getSupertokensUserId()));
 
-        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user4.getSupertokensUserId()).user;
+        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                user4.getSupertokensUserId()).user;
         AuthRecipe.linkAccounts(process.getProcess(), user3.getSupertokensUserId(), primaryUser.getSupertokensUserId());
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), primaryUser.getSupertokensUserId());
         AuthRecipe.linkAccounts(process.getProcess(), user1.getSupertokensUserId(), primaryUser.getSupertokensUserId());
 
-        for (String userId : new String[]{user1.getSupertokensUserId(), user2.getSupertokensUserId(), user3.getSupertokensUserId(), user4.getSupertokensUserId()}) {
+        for (String userId : new String[]{user1.getSupertokensUserId(), user2.getSupertokensUserId(),
+                user3.getSupertokensUserId(), user4.getSupertokensUserId()}) {
             AuthRecipeUserInfo result = AuthRecipe.getUserById(process.getProcess(), userId);
             assertTrue(result.isPrimaryUser);
 
@@ -161,11 +165,10 @@ public class GetUserByIdTest {
     @Test
     public void testUnknownUserIdReturnsNull() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -182,11 +185,10 @@ public class GetUserByIdTest {
     public void testLoginMethodsAreSortedByTime() throws Exception {
         for (int i = 0; i < 10; i++) {
             String[] args = {"../"};
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
             FeatureFlagTestContent.getInstance(process.getProcess())
                     .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                             EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-            process.startProcess();
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
             if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -196,14 +198,16 @@ public class GetUserByIdTest {
             // Create users
             AuthRecipeUserInfo user4 = createPasswordlessUserWithPhone(process.getProcess(), "+919876543210");
             Thread.sleep(50);
-            AuthRecipeUserInfo user2 = createThirdPartyUser(process.getProcess(), "google", "userid1", "test@example.com");
+            AuthRecipeUserInfo user2 = createThirdPartyUser(process.getProcess(), "google", "userid1",
+                    "test@example.com");
             Thread.sleep(50);
             AuthRecipeUserInfo user3 = createPasswordlessUserWithEmail(process.getProcess(), "test@example.com");
             Thread.sleep(50);
             AuthRecipeUserInfo user1 = createEmailPasswordUser(process.getProcess(), "test@example.com", "password1");
 
             // Link accounts randomly
-            String[] userIds = new String[]{user1.getSupertokensUserId(), user2.getSupertokensUserId(), user3.getSupertokensUserId(), user4.getSupertokensUserId()};
+            String[] userIds = new String[]{user1.getSupertokensUserId(), user2.getSupertokensUserId(),
+                    user3.getSupertokensUserId(), user4.getSupertokensUserId()};
             Collections.shuffle(Arrays.asList(userIds));
             AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), userIds[0]).user;
             AuthRecipe.linkAccounts(process.getProcess(), userIds[1], primaryUser.getSupertokensUserId());
@@ -215,9 +219,9 @@ public class GetUserByIdTest {
                 assertTrue(result.isPrimaryUser);
 
                 assertEquals(4, result.loginMethods.length);
-                assert(result.loginMethods[0].timeJoined <= result.loginMethods[1].timeJoined);
-                assert(result.loginMethods[1].timeJoined <= result.loginMethods[2].timeJoined);
-                assert(result.loginMethods[2].timeJoined <= result.loginMethods[3].timeJoined);
+                assert (result.loginMethods[0].timeJoined <= result.loginMethods[1].timeJoined);
+                assert (result.loginMethods[1].timeJoined <= result.loginMethods[2].timeJoined);
+                assert (result.loginMethods[2].timeJoined <= result.loginMethods[3].timeJoined);
             }
             process.kill();
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));

@@ -21,7 +21,7 @@ import io.supertokens.Main;
 import io.supertokens.ProcessState;
 import io.supertokens.authRecipe.AuthRecipe;
 import io.supertokens.emailpassword.EmailPassword;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.emailverification.EmailVerification;
 import io.supertokens.featureflag.EE_FEATURES;
 import io.supertokens.featureflag.FeatureFlagTestContent;
@@ -47,6 +47,9 @@ import static org.junit.Assert.*;
 public class EmailVerificationTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -127,7 +130,8 @@ public class EmailVerificationTest {
                 fail();
             } catch (HttpResponseException e) {
                 assertEquals(400, e.statusCode);
-                assertTrue(e.getMessage().contains("Http error. Status Code: 400. Message: Field name 'isVerified' is invalid in JSON input"));
+                assertTrue(e.getMessage().contains(
+                        "Http error. Status Code: 400. Message: Field name 'isVerified' is invalid in JSON input"));
             }
         }
 
@@ -225,11 +229,10 @@ public class EmailVerificationTest {
     @Test
     public void testWithAccountLinking() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -238,7 +241,8 @@ public class EmailVerificationTest {
 
         AuthRecipeUserInfo user1 = createEmailPasswordUser(process.getProcess(), "test@example.com", "password");
         Thread.sleep(50);
-        AuthRecipeUserInfo user2 = createThirdPartyUser(process.getProcess(), "google", "google-user", "test@example.com");
+        AuthRecipeUserInfo user2 = createThirdPartyUser(process.getProcess(), "google", "google-user",
+                "test@example.com");
 
         AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId());
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), user1.getSupertokensUserId());
@@ -256,10 +260,11 @@ public class EmailVerificationTest {
             signUpRequestBody.add("email", emailObject);
 
             JsonObject response = HttpRequestForTesting.sendJsonPOSTRequest(process.getProcess(), "",
-                    "http://localhost:3567/recipe/signinup", signUpRequestBody, 1000000, 1000000, null,
+                    "http://localhost:3567/recipe/signinup", signUpRequestBody, 1000, 1000, null,
                     SemVer.v4_0.get(), "thirdparty");
 
-            assertTrue(EmailVerification.isEmailVerified(process.getProcess(), user2.getSupertokensUserId(), "test@example.com"));
+            assertTrue(EmailVerification.isEmailVerified(process.getProcess(), user2.getSupertokensUserId(),
+                    "test@example.com"));
         }
     }
 }

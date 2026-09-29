@@ -65,6 +65,9 @@ public class ConfigTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -81,15 +84,14 @@ public class ConfigTest {
 
         Utils.setValueInConfig("refresh_token_validity", "144001");
         Utils.setValueInConfig("access_token_signing_key_dynamic", "false");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.LOADING_ALL_TENANT_CONFIG));
 
-        Assert.assertEquals(Config.getConfig(process.getProcess()).getRefreshTokenValidity(),
+        Assert.assertEquals(Config.getConfig(process.getProcess()).getRefreshTokenValidityInMillis(),
                 (long) 144001 * 60 * 1000);
         Assert.assertEquals(Config.getConfig(process.getProcess()).getAccessTokenSigningKeyDynamic(),
                 false);
@@ -109,10 +111,9 @@ public class ConfigTest {
         String[] args = {"../"};
 
         Utils.setValueInConfig("access_token_validity", "-1");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
 
         ProcessState.EventAndException e = process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.INIT_FAILURE);
         assertNotNull(e);
@@ -133,10 +134,9 @@ public class ConfigTest {
 
         Utils.setValueInConfig("refresh_token_validity", "144001");
         Utils.setValueInConfig("access_token_signing_key_dynamic", "false");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -159,7 +159,7 @@ public class ConfigTest {
                         new PasswordlessConfig(false),
                         null, null, tenantConfig)}, new ArrayList<>());
 
-        Assert.assertEquals(Config.getConfig(process.getProcess()).getRefreshTokenValidity(),
+        Assert.assertEquals(Config.getConfig(process.getProcess()).getRefreshTokenValidityInMillis(),
                 (long) 144001 * 60 * 1000);
         Assert.assertEquals(Config.getConfig(process.getProcess()).getPasswordResetTokenLifetime(),
                 3600000);
@@ -169,7 +169,7 @@ public class ConfigTest {
                 false);
 
         Assert.assertEquals(Config.getConfig(new TenantIdentifier("abc", null, null), process.getProcess())
-                        .getRefreshTokenValidity(),
+                        .getRefreshTokenValidityInMillis(),
                 (long) 144002 * 60 * 1000);
         Assert.assertEquals(Config.getConfig(new TenantIdentifier("abc", null, null), process.getProcess())
                         .getPasswordResetTokenLifetime(),
@@ -192,12 +192,11 @@ public class ConfigTest {
 
         Utils.setValueInConfig("refresh_token_validity", "144001");
         Utils.setValueInConfig("access_token_signing_key_dynamic", "false");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        CoreConfigTestContent.getInstance(process.main)
+        CoreConfigTestContent.getInstance(process.getProcess())
                 .setKeyValue(CoreConfigTestContent.VALIDITY_TESTING, true);
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         JsonObject tenantConfig = new JsonObject();
@@ -225,12 +224,11 @@ public class ConfigTest {
             throws InterruptedException, IOException {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        CoreConfigTestContent.getInstance(process.main)
+        CoreConfigTestContent.getInstance(process.getProcess())
                 .setKeyValue(CoreConfigTestContent.VALIDITY_TESTING, true);
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -261,12 +259,11 @@ public class ConfigTest {
             throws InterruptedException, IOException, InvalidConfigException, TenantOrAppNotFoundException {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        CoreConfigTestContent.getInstance(process.main)
+        CoreConfigTestContent.getInstance(process.getProcess())
                 .setKeyValue(CoreConfigTestContent.VALIDITY_TESTING, true);
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -319,10 +316,9 @@ public class ConfigTest {
         String[] args = {"../"};
 
         Utils.setValueInConfig("email_verification_token_lifetime", "144001");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -414,10 +410,9 @@ public class ConfigTest {
         String[] args = {"../"};
 
         Utils.setValueInConfig("email_verification_token_lifetime", "144001");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -472,10 +467,9 @@ public class ConfigTest {
             InvalidConfigException, CannotModifyBaseConfigException, TenantOrAppNotFoundException {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -662,10 +656,9 @@ public class ConfigTest {
             InvalidConfigException, CannotModifyBaseConfigException, TenantOrAppNotFoundException {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -690,7 +683,8 @@ public class ConfigTest {
             );
             fail();
         } catch (BadPermissionException e) {
-            assertEquals("You must use the default or same connectionUriDomain to create/update a connectionUriDomain", e.getMessage());
+            assertEquals("You must use the default or same connectionUriDomain to create/update a connectionUriDomain",
+                    e.getMessage());
         }
 
         try {
@@ -905,7 +899,7 @@ public class ConfigTest {
         }
 
         TenantConfig[] allTenants = Multitenancy.getAllTenants(process.getProcess());
-        assertEquals(3, allTenants.length);
+        assertEquals(3 + 1, allTenants.length); // + one app created for test
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -918,10 +912,9 @@ public class ConfigTest {
             InvalidConfigException, CannotModifyBaseConfigException, TenantOrAppNotFoundException {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -952,10 +945,9 @@ public class ConfigTest {
     public void testThatDifferentTenantsInSameAppCannotHaveDifferentAPIKeys() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1049,7 +1041,200 @@ public class ConfigTest {
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
 
+    @Test
+    public void testUpdatingAppAPIKeysSucceedsWhenChildInheritsValue() throws Exception {
+        String[] args = {Utils.getInstallDir()};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+        FeatureFlagTestContent.getInstance(process.getProcess())
+                .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+            return;
+        }
+
+        TenantIdentifier app = new TenantIdentifier(null, "inherited-app", null);
+        TenantIdentifier child = new TenantIdentifier(null, "inherited-app", "child");
+        String oldApiKey = "inherited-app-key-0001";
+        String newApiKey = "inherited-app-key-0002";
+
+        JsonObject appConfig = new JsonObject();
+        appConfig.addProperty("api_keys", oldApiKey);
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                app,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, appConfig
+        ), false);
+
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                child,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, new JsonObject()
+        ), false);
+
+        assertArrayEquals(new String[]{oldApiKey}, Config.getConfig(child, process.getProcess()).getAPIKeys());
+
+        JsonObject updatedAppConfig = new JsonObject();
+        updatedAppConfig.addProperty("api_keys", newApiKey);
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                app,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, updatedAppConfig
+        ), false);
+
+        assertArrayEquals(new String[]{newApiKey}, Config.getConfig(app, process.getProcess()).getAPIKeys());
+        assertArrayEquals(new String[]{newApiKey}, Config.getConfig(child, process.getProcess()).getAPIKeys());
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testUpdatingConnectionUriDomainAPIKeysSucceedsWhenChildInheritsValue() throws Exception {
+        String[] args = {Utils.getInstallDir()};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+        FeatureFlagTestContent.getInstance(process.getProcess())
+                .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL ||
+                StorageLayer.isInMemDb(process.getProcess())) {
+            return;
+        }
+
+        TenantIdentifier connectionUriDomain = new TenantIdentifier("inherited-cud", null, null);
+        TenantIdentifier child = new TenantIdentifier("inherited-cud", null, "child");
+        TenantIdentifier app = new TenantIdentifier("inherited-cud", "app", null);
+        TenantIdentifier appChild = new TenantIdentifier("inherited-cud", "app", "child");
+        String oldApiKey = "inherited-cud-key-0001";
+        String newApiKey = "inherited-cud-key-0002";
+
+        JsonObject connectionUriDomainConfig = new JsonObject();
+        StorageLayer.getStorage(new TenantIdentifier(null, null, null), process.getProcess())
+                .modifyConfigToAddANewUserPoolForTesting(connectionUriDomainConfig, 1);
+        connectionUriDomainConfig.addProperty("api_keys", oldApiKey);
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                connectionUriDomain,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, connectionUriDomainConfig
+        ), false);
+
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                child,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, new JsonObject()
+        ), false);
+
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                app,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, new JsonObject()
+        ), false);
+
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                appChild,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, new JsonObject()
+        ), false);
+
+        assertArrayEquals(new String[]{oldApiKey}, Config.getConfig(child, process.getProcess()).getAPIKeys());
+        assertArrayEquals(new String[]{oldApiKey}, Config.getConfig(appChild, process.getProcess()).getAPIKeys());
+
+        JsonObject updatedConnectionUriDomainConfig = connectionUriDomainConfig.deepCopy();
+        updatedConnectionUriDomainConfig.addProperty("api_keys", newApiKey);
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                connectionUriDomain,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, updatedConnectionUriDomainConfig
+        ), false);
+
+        assertArrayEquals(new String[]{newApiKey},
+                Config.getConfig(connectionUriDomain, process.getProcess()).getAPIKeys());
+        assertArrayEquals(new String[]{newApiKey}, Config.getConfig(child, process.getProcess()).getAPIKeys());
+        assertArrayEquals(new String[]{newApiKey}, Config.getConfig(appChild, process.getProcess()).getAPIKeys());
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testUpdatingAppAPIKeysRejectsExplicitChildConflict() throws Exception {
+        String[] args = {Utils.getInstallDir()};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
+        FeatureFlagTestContent.getInstance(process.getProcess())
+                .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+            return;
+        }
+
+        TenantIdentifier app = new TenantIdentifier(null, "explicit-child-app", null);
+        TenantIdentifier child = new TenantIdentifier(null, "explicit-child-app", "child");
+        String oldApiKey = "explicit-child-key-0001";
+        String newApiKey = "explicit-child-key-0002";
+
+        JsonObject appConfig = new JsonObject();
+        appConfig.addProperty("api_keys", oldApiKey);
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                app,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, appConfig
+        ), false);
+
+        JsonObject childConfig = new JsonObject();
+        childConfig.addProperty("api_keys", oldApiKey);
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                child,
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null, childConfig
+        ), false);
+
+        JsonObject updatedAppConfig = new JsonObject();
+        updatedAppConfig.addProperty("api_keys", newApiKey);
+        try {
+            Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                    app,
+                    new EmailPasswordConfig(true),
+                    new ThirdPartyConfig(true, null),
+                    new PasswordlessConfig(true),
+                    null, null, updatedAppConfig
+            ), false);
+            fail();
+        } catch (InvalidConfigException e) {
+            assertEquals("You cannot set different values for api_keys for the same appId", e.getMessage());
+        }
+
+        assertArrayEquals(new String[]{oldApiKey}, Config.getConfig(app, process.getProcess()).getAPIKeys());
+        assertArrayEquals(new String[]{oldApiKey}, Config.getConfig(child, process.getProcess()).getAPIKeys());
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
     }
 
     @Test
@@ -1089,10 +1274,9 @@ public class ConfigTest {
             String[] args = {"../"};
 
             Utils.setValueInConfig("email_verification_token_lifetime", "1000");
-            TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+            TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
             FeatureFlagTestContent.getInstance(process.getProcess())
                     .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-            process.startProcess();
             assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
             if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1123,13 +1307,13 @@ public class ConfigTest {
 
                     CoreConfig coreConfig = Config.getConfig(tenantIdentifier, process.getProcess());
                     // Check for previous value in the hierarchy
-                    assertEquals((i+1) * 1000, coreConfig.getEmailVerificationTokenLifetime());
+                    assertEquals((i + 1) * 1000, coreConfig.getEmailVerificationTokenLifetime());
 
                 }
 
                 { // set a new value and test that it works
                     JsonObject coreConfigJson = new JsonObject();
-                    coreConfigJson.addProperty("email_verification_token_lifetime", (i+2) * 1000);
+                    coreConfigJson.addProperty("email_verification_token_lifetime", (i + 2) * 1000);
                     StorageLayer.getStorage(new TenantIdentifier(null, null, null), process.getProcess())
                             .modifyConfigToAddANewUserPoolForTesting(coreConfigJson, 1);
 
@@ -1142,7 +1326,7 @@ public class ConfigTest {
                     ), false);
 
                     CoreConfig coreConfig2 = Config.getConfig(tenantIdentifier, process.getProcess());
-                    assertEquals((i+2) * 1000, coreConfig2.getEmailVerificationTokenLifetime());
+                    assertEquals((i + 2) * 1000, coreConfig2.getEmailVerificationTokenLifetime());
                 }
             }
 
@@ -1156,10 +1340,9 @@ public class ConfigTest {
         String[] args = {"../"};
 
         Utils.setValueInConfig("email_verification_token_lifetime", "1000");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1211,10 +1394,9 @@ public class ConfigTest {
         String[] args = {"../"};
 
         Utils.setValueInConfig("email_verification_token_lifetime", "1000");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1287,10 +1469,9 @@ public class ConfigTest {
     @Test
     public void testInvalidConfigWhileCreatingNewTenant() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1319,10 +1500,9 @@ public class ConfigTest {
     @Test
     public void testThatConfigChangesReloadsConfig() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1388,10 +1568,9 @@ public class ConfigTest {
     @Test
     public void testThatConfigChangesInAppReloadsConfigInTenant() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1431,13 +1610,14 @@ public class ConfigTest {
                     new ThirdPartyConfig(true, null),
                     new PasswordlessConfig(true),
                     null, null, coreConfig
-            ), false);Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
-                t1,
-                new EmailPasswordConfig(true),
-                new ThirdPartyConfig(true, null),
-                new PasswordlessConfig(true),
-                null, null, coreConfig
-        ), false);
+            ), false);
+            Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                    t1,
+                    new EmailPasswordConfig(true),
+                    new ThirdPartyConfig(true, null),
+                    new PasswordlessConfig(true),
+                    null, null, coreConfig
+            ), false);
 
             assertNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.TENANTS_CHANGED_DURING_REFRESH_FROM_DB));
 
@@ -1471,10 +1651,9 @@ public class ConfigTest {
     @Test
     public void testThatConfigChangesReloadsStorageLayer() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1558,10 +1737,9 @@ public class ConfigTest {
     @Test
     public void testThatConfigChangesReloadsFeatureFlag() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1626,10 +1804,9 @@ public class ConfigTest {
     @Test
     public void testThatConfigChangesReloadsSigningKeys() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1652,7 +1829,8 @@ public class ConfigTest {
         {
             ProcessState.getInstance(process.getProcess()).clear();
 
-            AccessTokenSigningKey accessTokenSigningKeyBefore = AccessTokenSigningKey.getInstance(t1, process.getProcess());
+            AccessTokenSigningKey accessTokenSigningKeyBefore = AccessTokenSigningKey.getInstance(t1,
+                    process.getProcess());
             RefreshTokenKey refreshTokenKeyBefore = RefreshTokenKey.getInstance(t1, process.getProcess());
             JWTSigningKey jwtSigningKeyBefore = JWTSigningKey.getInstance(t1, process.getProcess());
             SigningKeys signingKeysBefore = SigningKeys.getInstance(t1, process.getProcess());
@@ -1668,7 +1846,8 @@ public class ConfigTest {
 
             assertNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.TENANTS_CHANGED_DURING_REFRESH_FROM_DB));
 
-            AccessTokenSigningKey accessTokenSigningKeyAfter = AccessTokenSigningKey.getInstance(t1, process.getProcess());
+            AccessTokenSigningKey accessTokenSigningKeyAfter = AccessTokenSigningKey.getInstance(t1,
+                    process.getProcess());
             RefreshTokenKey refreshTokenKeyAfter = RefreshTokenKey.getInstance(t1, process.getProcess());
             JWTSigningKey jwtSigningKeyAfter = JWTSigningKey.getInstance(t1, process.getProcess());
             SigningKeys signingKeysAfter = SigningKeys.getInstance(t1, process.getProcess());
@@ -1680,7 +1859,8 @@ public class ConfigTest {
         }
 
         {
-            AccessTokenSigningKey accessTokenSigningKeyBefore = AccessTokenSigningKey.getInstance(t1, process.getProcess());
+            AccessTokenSigningKey accessTokenSigningKeyBefore = AccessTokenSigningKey.getInstance(t1,
+                    process.getProcess());
             RefreshTokenKey refreshTokenKeyBefore = RefreshTokenKey.getInstance(t1, process.getProcess());
             JWTSigningKey jwtSigningKeyBefore = JWTSigningKey.getInstance(t1, process.getProcess());
             SigningKeys signingKeysBefore = SigningKeys.getInstance(t1, process.getProcess());
@@ -1695,7 +1875,8 @@ public class ConfigTest {
                     null, null, coreConfig
             ), false);
 
-            AccessTokenSigningKey accessTokenSigningKeyAfter = AccessTokenSigningKey.getInstance(t1, process.getProcess());
+            AccessTokenSigningKey accessTokenSigningKeyAfter = AccessTokenSigningKey.getInstance(t1,
+                    process.getProcess());
             RefreshTokenKey refreshTokenKeyAfter = RefreshTokenKey.getInstance(t1, process.getProcess());
             JWTSigningKey jwtSigningKeyAfter = JWTSigningKey.getInstance(t1, process.getProcess());
             SigningKeys signingKeysAfter = SigningKeys.getInstance(t1, process.getProcess());
@@ -1716,10 +1897,9 @@ public class ConfigTest {
         // New apps/tenants are added to the loaded config
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1781,15 +1961,18 @@ public class ConfigTest {
 
         assertEquals(
                 300,
-                Config.getConfig(new TenantIdentifier(null, "a2", null), process.getProcess()).getEmailVerificationTokenLifetime()
+                Config.getConfig(new TenantIdentifier(null, "a2", null), process.getProcess())
+                        .getEmailVerificationTokenLifetime()
         );
         assertEquals(
                 400,
-                Config.getConfig(new TenantIdentifier(null, "a2", "t1"), process.getProcess()).getEmailVerificationTokenLifetime()
+                Config.getConfig(new TenantIdentifier(null, "a2", "t1"), process.getProcess())
+                        .getEmailVerificationTokenLifetime()
         );
         assertEquals(
                 100,
-                Config.getConfig(new TenantIdentifier(null, "a1", null), process.getProcess()).getEmailVerificationTokenLifetime()
+                Config.getConfig(new TenantIdentifier(null, "a1", null), process.getProcess())
+                        .getEmailVerificationTokenLifetime()
         );
 
         process.kill();
@@ -1801,10 +1984,9 @@ public class ConfigTest {
         String[] args = {"../"};
 
         Utils.setValueInConfig("email_verification_token_lifetime", "144001");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1835,10 +2017,9 @@ public class ConfigTest {
     public void testCoreSpecificConfigIsNotAllowedForNewTenants() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1889,10 +2070,9 @@ public class ConfigTest {
     public void testAllConflictingConfigs() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -1937,8 +2117,8 @@ public class ConfigTest {
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
 
-        for (int i=0; i<disallowed.length; i++) {
-            process = TestingProcessManager.start(args, false);
+        for (int i = 0; i < disallowed.length; i++) {
+            process = TestingProcessManager.startIsolatedProcess(args, false);
             FeatureFlagTestContent.getInstance(process.getProcess())
                     .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
             process.startProcess();
@@ -1996,12 +2176,13 @@ public class ConfigTest {
                 new Object[]{"abcd1234abcd1234abcd1234abcd1234", "qwer1234qwer1234qwer1234qwer1234"}, // api_keys
                 new Object[]{true, false}, // disable_telemetry
                 new Object[]{"BCRYPT", "ARGON2"}, // password_hashing_alg
-                new Object[]{"abcd1234abcd1234abcd1234abcd1234", "qwer1234qwer1234qwer1234qwer1234"}, // firebase_password_hashing_signer_key
+                new Object[]{"abcd1234abcd1234abcd1234abcd1234", "qwer1234qwer1234qwer1234qwer1234"},
+                // firebase_password_hashing_signer_key
                 new Object[]{"2.21", "3.0"}, // supertokens_max_cdi_version
         };
 
-        for (int i=0; i<conflictingInSameUserPool.length; i++) {
-            process = TestingProcessManager.start(args, false);
+        for (int i = 0; i < conflictingInSameUserPool.length; i++) {
+            process = TestingProcessManager.startIsolatedProcess(args, false);
             FeatureFlagTestContent.getInstance(process.getProcess())
                     .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
             process.startProcess();
@@ -2068,7 +2249,8 @@ public class ConfigTest {
                 continue;
             }
 
-            if (!(field.isAnnotationPresent(ConfigYamlOnly.class) || field.isAnnotationPresent(NotConflictingInApp.class))) {
+            if (!(field.isAnnotationPresent(ConfigYamlOnly.class) ||
+                    field.isAnnotationPresent(NotConflictingInApp.class))) {
                 fail(field.getName() + " does not have ConfigYamlOnly or NotConflictingInApp annotation");
             }
         }

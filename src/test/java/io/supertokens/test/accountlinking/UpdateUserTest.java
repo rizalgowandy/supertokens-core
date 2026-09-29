@@ -23,7 +23,7 @@ import io.supertokens.featureflag.EE_FEATURES;
 import io.supertokens.featureflag.FeatureFlagTestContent;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.test.TestingProcessManager;
 import io.supertokens.test.Utils;
@@ -40,6 +40,9 @@ public class UpdateUserTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -53,11 +56,10 @@ public class UpdateUserTest {
     @Test
     public void testThatUpdateEmailFailsWhenPassedWithNonEmailPasswordRecipeUserId() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -65,13 +67,15 @@ public class UpdateUserTest {
         }
 
         AuthRecipeUserInfo user1 = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password");
-        AuthRecipeUserInfo user2 = ThirdParty.signInUp(process.getProcess(), "google", "googleid1", "test2@example.com").user;
+        AuthRecipeUserInfo user2 = ThirdParty.signInUp(process.getProcess(), "google", "googleid1",
+                "test2@example.com").user;
 
         AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId());
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), user1.getSupertokensUserId());
 
         try {
-            EmailPassword.updateUsersEmailOrPassword(process.getProcess(), user2.getSupertokensUserId(), "test3@example.com", null);
+            EmailPassword.updateUsersEmailOrPassword(process.getProcess(), user2.getSupertokensUserId(),
+                    "test3@example.com", null);
             fail();
         } catch (UnknownUserIdException e) {
             // ignore

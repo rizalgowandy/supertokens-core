@@ -28,6 +28,9 @@ public class CreateTotpDeviceAPITest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -80,9 +83,9 @@ public class CreateTotpDeviceAPITest {
             return;
         }
 
-        FeatureFlag.getInstance(process.main)
+        FeatureFlag.getInstance(process.getProcess())
                 .setLicenseKeyAndSyncFeatures(TotpLicenseTest.OPAQUE_KEY_WITH_MFA_FEATURE);
-        FeatureFlagTestContent.getInstance(process.main)
+        FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MFA});
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -95,7 +98,7 @@ public class CreateTotpDeviceAPITest {
         {
             Exception e = createDeviceRequest(process, body);
             checkFieldMissingErrorResponse(e, "userId");
-            
+
             body.addProperty("deviceName", "");
 
             body.addProperty("userId", "");
@@ -158,7 +161,7 @@ public class CreateTotpDeviceAPITest {
 
             // verify d1
             {
-                TOTPDevice device = Totp.getDevices(process.getProcess(), "user-id" )[0];
+                TOTPDevice device = Totp.getDevices(process.getProcess(), "user-id")[0];
                 String validTotp = TOTPRecipeTest.generateTotpCode(process.getProcess(), device);
                 Totp.verifyDevice(process.getProcess(), "user-id", "d1", validTotp);
             }

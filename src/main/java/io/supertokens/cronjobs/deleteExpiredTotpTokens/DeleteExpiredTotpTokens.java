@@ -7,6 +7,7 @@ import io.supertokens.cronjobs.CronTaskTest;
 import io.supertokens.output.Logging;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
+import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
 import io.supertokens.pluginInterface.totp.sqlStorage.TOTPSQLStorage;
 import io.supertokens.storageLayer.StorageLayer;
 import org.jetbrains.annotations.TestOnly;
@@ -30,7 +31,11 @@ public class DeleteExpiredTotpTokens extends CronTask {
 
     @TestOnly
     public static DeleteExpiredTotpTokens getInstance(Main main) {
-        return (DeleteExpiredTotpTokens) main.getResourceDistributor().getResource(RESOURCE_KEY);
+        try {
+            return (DeleteExpiredTotpTokens) main.getResourceDistributor().getResource(TenantIdentifier.BASE_TENANT, RESOURCE_KEY);
+        } catch (TenantOrAppNotFoundException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Override
@@ -50,7 +55,8 @@ public class DeleteExpiredTotpTokens extends CronTask {
         // doesn't delete totp codes that keep the rate limiting active for
         // the expected cooldown duration.
         int deletedCount = storage.removeExpiredCodes(tenantIdentifier, expiredBefore);
-        Logging.debug(this.main, tenantIdentifier, "Cron DeleteExpiredTotpTokens deleted " + deletedCount + " expired TOTP codes");
+        Logging.debug(this.main, tenantIdentifier,
+                "Cron DeleteExpiredTotpTokens deleted " + deletedCount + " expired TOTP codes");
     }
 
     @Override

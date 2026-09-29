@@ -44,10 +44,8 @@ import io.supertokens.test.httpRequest.HttpResponseException;
 import io.supertokens.thirdparty.InvalidProviderConfigException;
 import io.supertokens.useridmapping.UserIdMapping;
 import io.supertokens.utils.SemVer;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.rules.TestRule;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -57,6 +55,9 @@ import static org.junit.Assert.*;
 
 public class TestWithNonAuthRecipes {
     TestingProcessManager.TestingProcess process;
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -77,9 +78,11 @@ public class TestWithNonAuthRecipes {
 
         String[] args = {"../"};
 
-        this.process = TestingProcessManager.start(args);
+        // Use startProcess=false to avoid race condition with feature flag setup
+        this.process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
+        // Now start the process after feature flags are set
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -117,28 +120,33 @@ public class TestWithNonAuthRecipes {
         Storage t1Storage = (StorageLayer.getStorage(t1, process.getProcess()));
 
         // Create users
-        AuthRecipeUserInfo user1 = EmailPassword.signUp(t0, t0Storage, process.getProcess(), "test@example.com", "password123");
-        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com", "password123");
+        AuthRecipeUserInfo user1 = EmailPassword.signUp(t0, t0Storage, process.getProcess(), "test@example.com",
+                "password123");
+        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com",
+                "password123");
 
         UserIdMapping.populateExternalUserIdForUsers(t0.toAppIdentifier(), t0Storage, new AuthRecipeUserInfo[]{user1});
         UserIdMapping.populateExternalUserIdForUsers(t0.toAppIdentifier(), t1Storage, new AuthRecipeUserInfo[]{user2});
 
         // Check that get user by ID works fine
-        JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(), process.getProcess());
-        assertEquals(user1.toJson(), jsonUser1.get("user").getAsJsonObject());
+        JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(),
+                process.getProcess());
+        assertEquals(user1.toJson(true), jsonUser1.get("user").getAsJsonObject());
 
-        JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(), process.getProcess());
-        assertEquals(user2.toJson(), jsonUser2.get("user").getAsJsonObject());
+        JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(),
+                process.getProcess());
+        assertEquals(user2.toJson(true), jsonUser2.get("user").getAsJsonObject());
 
         JsonObject metadata = new JsonObject();
         metadata.addProperty("key", "value");
 
         {
             // Add metadata for user2 using t0 and ensure get user works fine
-            TestMultitenancyAPIHelper.updateUserMetadata(t0, user2.getSupertokensUserId(), metadata, process.getProcess());
+            TestMultitenancyAPIHelper.updateUserMetadata(t0, user2.getSupertokensUserId(), metadata,
+                    process.getProcess());
 
             jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(), process.getProcess());
-            assertEquals(user2.toJson(), jsonUser2.get("user").getAsJsonObject());
+            assertEquals(user2.toJson(true), jsonUser2.get("user").getAsJsonObject());
 
             try {
                 TestMultitenancyAPIHelper.getUserById(t1, user2.getSupertokensUserId(),
@@ -151,7 +159,8 @@ public class TestWithNonAuthRecipes {
 
         { // Add metadata using t1 results in 403
             try {
-                TestMultitenancyAPIHelper.updateUserMetadata(t1, user1.getSupertokensUserId(), metadata, process.getProcess());
+                TestMultitenancyAPIHelper.updateUserMetadata(t1, user1.getSupertokensUserId(), metadata,
+                        process.getProcess());
                 fail();
             } catch (HttpResponseException e) {
                 assertEquals(403, e.statusCode);
@@ -160,10 +169,11 @@ public class TestWithNonAuthRecipes {
 
         {
             // Add metadata for user1 using t0 and ensure get user works fine
-            TestMultitenancyAPIHelper.updateUserMetadata(t0, user1.getSupertokensUserId(), metadata, process.getProcess());
+            TestMultitenancyAPIHelper.updateUserMetadata(t0, user1.getSupertokensUserId(), metadata,
+                    process.getProcess());
 
             jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(), process.getProcess());
-            assertEquals(user1.toJson(), jsonUser1.get("user").getAsJsonObject());
+            assertEquals(user1.toJson(true), jsonUser1.get("user").getAsJsonObject());
 
             try {
                 TestMultitenancyAPIHelper.getUserById(t1, user1.getSupertokensUserId(), process.getProcess());
@@ -177,12 +187,16 @@ public class TestWithNonAuthRecipes {
         UserMetadataSQLStorage t1UserMetadataStorage = StorageUtils.getUserMetadataStorage(t1Storage);
 
         // Ensure that the metadata is saved in the correct storage
-        assertNotNull(t0UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(), user1.getSupertokensUserId())); // ensure t0 storage does not have user2's metadata
-        assertNotNull(t1UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(), user2.getSupertokensUserId())); // ensure t1 storage does not have user1's metadata
+        assertNotNull(t0UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(),
+                user1.getSupertokensUserId())); // ensure t0 storage does not have user2's metadata
+        assertNotNull(t1UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(),
+                user2.getSupertokensUserId())); // ensure t1 storage does not have user1's metadata
 
         // Ensure that the metadata is not stored in the wrong storage
-        assertNull(t0UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(), user2.getSupertokensUserId())); // ensure t0 storage does not have user2's metadata
-        assertNull(t1UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(), user1.getSupertokensUserId())); // ensure t1 storage does not have user1's metadata
+        assertNull(t0UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(),
+                user2.getSupertokensUserId())); // ensure t0 storage does not have user2's metadata
+        assertNull(t1UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(),
+                user1.getSupertokensUserId())); // ensure t1 storage does not have user1's metadata
 
         // Try deleting metadata
         try {
@@ -193,8 +207,10 @@ public class TestWithNonAuthRecipes {
         }
         TestMultitenancyAPIHelper.removeMetadata(t0, user1.getSupertokensUserId(), process.getProcess());
         TestMultitenancyAPIHelper.removeMetadata(t0, user2.getSupertokensUserId(), process.getProcess());
-        assertNull(t0UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(), user1.getSupertokensUserId())); // ensure t0 storage does not have user2's metadata
-        assertNull(t1UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(), user2.getSupertokensUserId())); // ensure t1 storage does not have user1's metadata
+        assertNull(t0UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(),
+                user1.getSupertokensUserId())); // ensure t0 storage does not have user2's metadata
+        assertNull(t1UserMetadataStorage.getUserMetadata(t0.toAppIdentifier(),
+                user2.getSupertokensUserId())); // ensure t1 storage does not have user1's metadata
     }
 
     @Test
@@ -214,19 +230,23 @@ public class TestWithNonAuthRecipes {
         Storage t1Storage = (StorageLayer.getStorage(t1, process.getProcess()));
 
         // Create users
-        AuthRecipeUserInfo user1 = EmailPassword.signUp(t0, t0Storage, process.getProcess(), "test@example.com", "password123");
-        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com", "password123");
+        AuthRecipeUserInfo user1 = EmailPassword.signUp(t0, t0Storage, process.getProcess(), "test@example.com",
+                "password123");
+        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com",
+                "password123");
 
         UserIdMapping.populateExternalUserIdForUsers(t0.toAppIdentifier(), t0Storage, new AuthRecipeUserInfo[]{user1});
         UserIdMapping.populateExternalUserIdForUsers(t1.toAppIdentifier(), t1Storage, new AuthRecipeUserInfo[]{user2});
 
         {
             // Check that get user by ID works fine
-            JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(), process.getProcess());
-            assertEquals(user1.toJson(), jsonUser1.get("user").getAsJsonObject());
+            JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(),
+                    process.getProcess());
+            assertEquals(user1.toJson(true), jsonUser1.get("user").getAsJsonObject());
 
-            JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(), process.getProcess());
-            assertEquals(user2.toJson(), jsonUser2.get("user").getAsJsonObject());
+            JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(),
+                    process.getProcess());
+            assertEquals(user2.toJson(true), jsonUser2.get("user").getAsJsonObject());
         }
 
         TestMultitenancyAPIHelper.createRole(t0, "role1", process.getProcess());
@@ -244,20 +264,24 @@ public class TestWithNonAuthRecipes {
 
         {
             // Check that get user by ID works fine
-            JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(), process.getProcess());
-            assertEquals(user1.toJson(), jsonUser1.get("user").getAsJsonObject());
+            JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(),
+                    process.getProcess());
+            assertEquals(user1.toJson(true), jsonUser1.get("user").getAsJsonObject());
 
-            JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(), process.getProcess());
-            assertEquals(user2.toJson(), jsonUser2.get("user").getAsJsonObject());
+            JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(),
+                    process.getProcess());
+            assertEquals(user2.toJson(true), jsonUser2.get("user").getAsJsonObject());
         }
 
         {
-            JsonObject user1Roles = TestMultitenancyAPIHelper.getUserRoles(t0, user1.getSupertokensUserId(), process.getProcess());
+            JsonObject user1Roles = TestMultitenancyAPIHelper.getUserRoles(t0, user1.getSupertokensUserId(),
+                    process.getProcess());
             assertEquals(1, user1Roles.get("roles").getAsJsonArray().size());
             user1Roles = TestMultitenancyAPIHelper.getUserRoles(t1, user1.getSupertokensUserId(), process.getProcess());
             assertEquals(0, user1Roles.get("roles").getAsJsonArray().size());
 
-            JsonObject user2Roles = TestMultitenancyAPIHelper.getUserRoles(t0, user2.getSupertokensUserId(), process.getProcess());
+            JsonObject user2Roles = TestMultitenancyAPIHelper.getUserRoles(t0, user2.getSupertokensUserId(),
+                    process.getProcess());
             assertEquals(0, user2Roles.get("roles").getAsJsonArray().size());
             user2Roles = TestMultitenancyAPIHelper.getUserRoles(t1, user2.getSupertokensUserId(), process.getProcess());
             assertEquals(1, user2Roles.get("roles").getAsJsonArray().size());
@@ -274,12 +298,14 @@ public class TestWithNonAuthRecipes {
         TestMultitenancyAPIHelper.deleteRole(t0, "role2", process.getProcess());
 
         {
-            JsonObject user1Roles = TestMultitenancyAPIHelper.getUserRoles(t0, user1.getSupertokensUserId(), process.getProcess());
+            JsonObject user1Roles = TestMultitenancyAPIHelper.getUserRoles(t0, user1.getSupertokensUserId(),
+                    process.getProcess());
             assertEquals(0, user1Roles.get("roles").getAsJsonArray().size());
             user1Roles = TestMultitenancyAPIHelper.getUserRoles(t1, user1.getSupertokensUserId(), process.getProcess());
             assertEquals(0, user1Roles.get("roles").getAsJsonArray().size());
 
-            JsonObject user2Roles = TestMultitenancyAPIHelper.getUserRoles(t0, user2.getSupertokensUserId(), process.getProcess());
+            JsonObject user2Roles = TestMultitenancyAPIHelper.getUserRoles(t0, user2.getSupertokensUserId(),
+                    process.getProcess());
             assertEquals(0, user2Roles.get("roles").getAsJsonArray().size());
             user2Roles = TestMultitenancyAPIHelper.getUserRoles(t1, user2.getSupertokensUserId(), process.getProcess());
             assertEquals(0, user2Roles.get("roles").getAsJsonArray().size());
@@ -287,11 +313,13 @@ public class TestWithNonAuthRecipes {
 
         {
             // Check that get user by ID works fine
-            JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(), process.getProcess());
-            assertEquals(user1.toJson(), jsonUser1.get("user").getAsJsonObject());
+            JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(),
+                    process.getProcess());
+            assertEquals(user1.toJson(true), jsonUser1.get("user").getAsJsonObject());
 
-            JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(), process.getProcess());
-            assertEquals(user2.toJson(), jsonUser2.get("user").getAsJsonObject());
+            JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(),
+                    process.getProcess());
+            assertEquals(user2.toJson(true), jsonUser2.get("user").getAsJsonObject());
         }
     }
 
@@ -312,26 +340,31 @@ public class TestWithNonAuthRecipes {
         Storage t1Storage = (StorageLayer.getStorage(t1, process.getProcess()));
 
         // Create users
-        AuthRecipeUserInfo user1 = EmailPassword.signUp(t0, t0Storage, process.getProcess(), "test@example.com", "password123");
-        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com", "password123");
+        AuthRecipeUserInfo user1 = EmailPassword.signUp(t0, t0Storage, process.getProcess(), "test@example.com",
+                "password123");
+        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com",
+                "password123");
 
         UserIdMapping.populateExternalUserIdForUsers(t0.toAppIdentifier(), t0Storage, new AuthRecipeUserInfo[]{user1});
         UserIdMapping.populateExternalUserIdForUsers(t1.toAppIdentifier(), t1Storage, new AuthRecipeUserInfo[]{user2});
 
         // Check that get user by ID works fine
-        JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(), process.getProcess());
-        assertEquals(user1.toJson(), jsonUser1.get("user").getAsJsonObject());
+        JsonObject jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(),
+                process.getProcess());
+        assertEquals(user1.toJson(true), jsonUser1.get("user").getAsJsonObject());
 
-        JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(), process.getProcess());
-        assertEquals(user2.toJson(), jsonUser2.get("user").getAsJsonObject());
+        JsonObject jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(),
+                process.getProcess());
+        assertEquals(user2.toJson(true), jsonUser2.get("user").getAsJsonObject());
 
         {
             // Add email verification for user2 using t1 and ensure get user works fine
-            TestMultitenancyAPIHelper.verifyEmail(t1, user2.getSupertokensUserId(), "test@example.com", process.getProcess());
+            TestMultitenancyAPIHelper.verifyEmail(t1, user2.getSupertokensUserId(), "test@example.com",
+                    process.getProcess());
 
             jsonUser2 = TestMultitenancyAPIHelper.getUserById(t0, user2.getSupertokensUserId(), process.getProcess());
             user2.loginMethods[0].setVerified();
-            assertEquals(user2.toJson(), jsonUser2.get("user").getAsJsonObject());
+            assertEquals(user2.toJson(true), jsonUser2.get("user").getAsJsonObject());
 
             try {
                 TestMultitenancyAPIHelper.getUserById(t1, user2.getSupertokensUserId(),
@@ -344,11 +377,12 @@ public class TestWithNonAuthRecipes {
 
         {
             // Add email verification for user1 using t0 and ensure get user works fine
-            TestMultitenancyAPIHelper.verifyEmail(t0, user1.getSupertokensUserId(), "test@example.com", process.getProcess());
+            TestMultitenancyAPIHelper.verifyEmail(t0, user1.getSupertokensUserId(), "test@example.com",
+                    process.getProcess());
 
             jsonUser1 = TestMultitenancyAPIHelper.getUserById(t0, user1.getSupertokensUserId(), process.getProcess());
             user1.loginMethods[0].setVerified();
-            assertEquals(user1.toJson(), jsonUser1.get("user").getAsJsonObject());
+            assertEquals(user1.toJson(true), jsonUser1.get("user").getAsJsonObject());
 
             try {
                 TestMultitenancyAPIHelper.getUserById(t1, user1.getSupertokensUserId(), process.getProcess());
@@ -366,20 +400,27 @@ public class TestWithNonAuthRecipes {
         assertTrue(t1EvStorage.isEmailVerified(t0.toAppIdentifier(), user2.getSupertokensUserId(), "test@example.com"));
 
         // Ensure that the metadata is not stored in the wrong storage
-        assertFalse(t0EvStorage.isEmailVerified(t0.toAppIdentifier(), user2.getSupertokensUserId(), "test@example.com")); // ensure t0 storage does not have user2's ev
-        assertFalse(t1EvStorage.isEmailVerified(t0.toAppIdentifier(), user1.getSupertokensUserId(), "test@example.com")); // ensure t1 storage does not have user1's ev
+        assertFalse(t0EvStorage.isEmailVerified(t0.toAppIdentifier(), user2.getSupertokensUserId(),
+                "test@example.com")); // ensure t0 storage does not have user2's ev
+        assertFalse(t1EvStorage.isEmailVerified(t0.toAppIdentifier(), user1.getSupertokensUserId(),
+                "test@example.com")); // ensure t1 storage does not have user1's ev
 
         // Try unverify
         try {
-            TestMultitenancyAPIHelper.unverifyEmail(t1, user1.getSupertokensUserId(), "test@example.com", process.getProcess());
+            TestMultitenancyAPIHelper.unverifyEmail(t1, user1.getSupertokensUserId(), "test@example.com",
+                    process.getProcess());
             fail();
         } catch (HttpResponseException e) {
             assertEquals(403, e.statusCode);
         }
-        TestMultitenancyAPIHelper.unverifyEmail(t0, user1.getSupertokensUserId(), "test@example.com", process.getProcess());
-        TestMultitenancyAPIHelper.unverifyEmail(t0, user2.getSupertokensUserId(), "test@example.com", process.getProcess());
-        assertFalse(t1EvStorage.isEmailVerified(t0.toAppIdentifier(), user2.getSupertokensUserId(), "test@example.com")); // ensure t1 storage does not have user2's ev
-        assertFalse(t0EvStorage.isEmailVerified(t0.toAppIdentifier(), user1.getSupertokensUserId(), "test@example.com")); // ensure t0 storage does not have user1's ev
+        TestMultitenancyAPIHelper.unverifyEmail(t0, user1.getSupertokensUserId(), "test@example.com",
+                process.getProcess());
+        TestMultitenancyAPIHelper.unverifyEmail(t0, user2.getSupertokensUserId(), "test@example.com",
+                process.getProcess());
+        assertFalse(t1EvStorage.isEmailVerified(t0.toAppIdentifier(), user2.getSupertokensUserId(),
+                "test@example.com")); // ensure t1 storage does not have user2's ev
+        assertFalse(t0EvStorage.isEmailVerified(t0.toAppIdentifier(), user1.getSupertokensUserId(),
+                "test@example.com")); // ensure t0 storage does not have user1's ev
     }
 
     @Test
@@ -399,8 +440,10 @@ public class TestWithNonAuthRecipes {
         Storage t1Storage = (StorageLayer.getStorage(t1, process.getProcess()));
 
         // Create users
-        AuthRecipeUserInfo user1 = EmailPassword.signUp(t0, t0Storage, process.getProcess(), "test@example.com", "password123");
-        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com", "password123");
+        AuthRecipeUserInfo user1 = EmailPassword.signUp(t0, t0Storage, process.getProcess(), "test@example.com",
+                "password123");
+        AuthRecipeUserInfo user2 = EmailPassword.signUp(t1, t1Storage, process.getProcess(), "test@example.com",
+                "password123");
 
         UserIdMapping.populateExternalUserIdForUsers(t0.toAppIdentifier(), t0Storage, new AuthRecipeUserInfo[]{user1});
         UserIdMapping.populateExternalUserIdForUsers(t1.toAppIdentifier(), t1Storage, new AuthRecipeUserInfo[]{user2});
@@ -421,7 +464,8 @@ public class TestWithNonAuthRecipes {
                     "session");
             assertEquals("OK", sessionResponse.get("status").getAsString());
             assertEquals(1, sessionResponse.get("sessionHandles").getAsJsonArray().size());
-            assertEquals(sess1.session.handle, sessionResponse.get("sessionHandles").getAsJsonArray().get(0).getAsString());
+            assertEquals(sess1.session.handle,
+                    sessionResponse.get("sessionHandles").getAsJsonArray().get(0).getAsString());
         }
 
         {

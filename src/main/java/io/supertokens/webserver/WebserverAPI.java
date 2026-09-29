@@ -27,10 +27,12 @@ import io.supertokens.multitenancy.MultitenancyHelper;
 import io.supertokens.multitenancy.exception.BadPermissionException;
 import io.supertokens.output.Logging;
 import io.supertokens.pluginInterface.Storage;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
-import io.supertokens.pluginInterface.multitenancy.*;
+import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
+import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
+import io.supertokens.pluginInterface.opentelemetry.WithinOtelSpan;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.useridmapping.UserIdType;
 import io.supertokens.utils.SemVer;
@@ -46,6 +48,8 @@ import org.apache.catalina.filters.RemoteAddrFilter;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 public abstract class WebserverAPI extends HttpServlet {
@@ -72,19 +76,31 @@ public abstract class WebserverAPI extends HttpServlet {
         supportedVersions.add(SemVer.v2_20);
         supportedVersions.add(SemVer.v2_21);
         supportedVersions.add(SemVer.v3_0);
+        supportedVersions.add(SemVer.v3_1);
         supportedVersions.add(SemVer.v4_0);
         supportedVersions.add(SemVer.v5_0);
+        supportedVersions.add(SemVer.v5_1);
+        supportedVersions.add(SemVer.v5_2);
+        supportedVersions.add(SemVer.v5_3);
+        supportedVersions.add(SemVer.v5_4);
+        supportedVersions.add(SemVer.v5_5);
+        supportedVersions.add(SemVer.v5_6);
     }
 
     public static SemVer getLatestCDIVersion() {
-        return SemVer.v5_0;
+        return SemVer.v5_6;
     }
 
     public SemVer getLatestCDIVersionForRequest(HttpServletRequest req)
-            throws ServletException, TenantOrAppNotFoundException {
+            throws ServletException {
         SemVer maxCDIVersion = getLatestCDIVersion();
-        String maxCDIVersionStr = Config.getConfig(
-                getAppIdentifierWithoutVerifying(req).getAsPublicTenantIdentifier(), main).getMaxCDIVersion();
+        String maxCDIVersionStr = null;
+        try {
+            maxCDIVersionStr = Config.getConfig(
+                    getAppIdentifierWithoutVerifying(req).getAsPublicTenantIdentifier(), main).getMaxCDIVersion();
+        } catch (TenantOrAppNotFoundException e) {
+            // ignore missing app
+        }
         if (maxCDIVersionStr != null) {
             maxCDIVersion = new SemVer(maxCDIVersionStr);
         }
@@ -106,6 +122,12 @@ public abstract class WebserverAPI extends HttpServlet {
     protected void sendTextResponse(int statusCode, String message, HttpServletResponse resp) throws IOException {
         resp.setStatus(statusCode);
         resp.setHeader("Content-Type", "text/html; charset=UTF-8");
+        resp.getWriter().println(message);
+    }
+
+    protected void sendXMLResponse(int statusCode, String message, HttpServletResponse resp) throws IOException {
+        resp.setStatus(statusCode);
+        resp.setHeader("Content-Type", "text/xml; charset=UTF-8");
         resp.getWriter().println(message);
     }
 
@@ -163,49 +185,78 @@ public abstract class WebserverAPI extends HttpServlet {
         return true;
     }
 
-    private void assertThatAPIKeyCheckPasses(HttpServletRequest req) throws ServletException,
-            TenantOrAppNotFoundException {
+    private String getApiKeyFromRequest(HttpServletRequest req) {
         String apiKey = req.getHeader("api-key");
 
-        // first we try the normal API key
-        String[] keys = Config.getConfig(
-                new TenantIdentifier(getConnectionUriDomain(req), getAppId(req), getTenantId(req)),
-                this.main).getAPIKeys();
-        if (keys != null) {
-            if (apiKey == null) {
-                throw new ServletException(new APIKeyUnauthorisedException());
-            }
-            apiKey = apiKey.trim();
-            boolean isAuthorised = false;
-            for (String key : keys) {
-                isAuthorised = isAuthorised || key.equals(apiKey);
-            }
-            if (isAuthorised) {
-                return;
+        if (apiKey == null) {
+            // API Key may also be passed via authoriation header
+            final String AUTH_HEADER = "Authorization";
+            final String BEARER_PREFIX = "bearer ";
+            String authHeader = req.getHeader(AUTH_HEADER);
+
+            if (authHeader != null && authHeader.toLowerCase().startsWith(BEARER_PREFIX)) {
+                apiKey = authHeader.substring(BEARER_PREFIX.length()).trim();
+            } else if (authHeader != null) {
+                apiKey = authHeader.trim();
             }
         }
+        return apiKey;
+    }
 
-        // if the normal API key did not exist, or did not match the api key from the header, we try the
-        // supertokens_saas_secret
-        String superTokensSaaSSecret = Config.getConfig(new TenantIdentifier(null, null, null), this.main)
-                .getSuperTokensSaaSSecret();
-        if (superTokensSaaSSecret != null) {
-            if (apiKey == null) {
+    private void assertThatAPIKeyCheckPasses(HttpServletRequest req) throws ServletException {
+        try {
+            String apiKey = getApiKeyFromRequest(req);
+
+            // Resolve the API keys from the app's public tenant rather than the raw request
+            // tenant. api_keys is @NotConflictingInApp (identical across an app's tenants), so
+            // for a real tenant this is equivalent, but it also resolves for an unknown tenant
+            // segment (e.g. /ghosttenant/...) under a real app — which previously threw
+            // TenantOrAppNotFoundException and caused this check to be skipped entirely,
+            // letting an unauthenticated caller through.
+            String[] keys = Config.getConfig(
+                    new TenantIdentifier(getConnectionUriDomain(req), getAppId(req), null),
+                    this.main).getAPIKeys();
+            if (keys != null) {
+                if (apiKey == null) {
+                    throw new ServletException(new APIKeyUnauthorisedException());
+                }
+                apiKey = apiKey.trim();
+                boolean isAuthorised = false;
+                for (String key : keys) {
+                    isAuthorised = isAuthorised || key.equals(apiKey);
+                }
+                if (isAuthorised) {
+                    return;
+                }
+            }
+
+            // if the normal API key did not exist, or did not match the api key from the header, we try the
+            // supertokens_saas_secret
+            String superTokensSaaSSecret = Config.getConfig(new TenantIdentifier(null, null, null), this.main)
+                    .getSuperTokensSaaSSecret();
+            if (superTokensSaaSSecret != null) {
+                if (apiKey == null) {
+                    throw new ServletException(new APIKeyUnauthorisedException());
+                }
+                if (apiKey.equals(superTokensSaaSSecret)) {
+                    return;
+                }
+            }
+
+            // if either were defined, and both failed, we throw an exception
+            if (superTokensSaaSSecret != null || keys != null) {
                 throw new ServletException(new APIKeyUnauthorisedException());
             }
-            if (apiKey.equals(superTokensSaaSSecret)) {
-                return;
-            }
-        }
-
-        // if either were defined, and both failed, we throw an exception
-        if (superTokensSaaSSecret != null || keys != null) {
-            throw new ServletException(new APIKeyUnauthorisedException());
+        } catch (TenantOrAppNotFoundException e) {
+            // The app/CUD does not exist, so there is no api_keys config to enforce and no app
+            // to operate on — let the app-specific handler return its "app not found" (400).
+            // (For an unknown *tenant* under a real app the key IS enforced: the lookup above
+            // resolves the app's public tenant, so we never reach here in that case.)
         }
     }
 
     protected boolean shouldProtectProtectedConfig(HttpServletRequest req) throws TenantOrAppNotFoundException {
-        String apiKey = req.getHeader("api-key");
+        String apiKey = getApiKeyFromRequest(req);
         String superTokensSaaSSecret = Config.getConfig(
                         new TenantIdentifier(null, null, null), this.main)
                 .getSuperTokensSaaSSecret();
@@ -231,16 +282,23 @@ public abstract class WebserverAPI extends HttpServlet {
         if (!apiPath.startsWith("/")) {
             apiPath = "/" + apiPath;
         }
-        if (apiPath.equals("/")) {
-            if (path.equals("") || path.equals("/")) {
-                return null;
-            }
+        if (apiPath.endsWith("/")) {
+            apiPath = apiPath.substring(0, apiPath.length() - 1);
+        }
+
+        if (apiPath.isBlank() && (path.equals("") || path.equals("/"))) {
+            return null;
         } else {
             if (path.matches("^/appid-[a-z0-9-]*/[a-z0-9-]+" + apiPath + "/?$")) {
                 String tenantId = path.split("/")[2].toLowerCase();
                 if (tenantId.equals(TenantIdentifier.DEFAULT_TENANT_ID)) {
                     return null;
                 }
+
+                if (Utils.INVALID_WORDS_FOR_TENANTID.contains(tenantId)) {
+                    return null;
+                }
+
                 return tenantId;
             } else if (path.matches("^/appid-[a-z0-9-]*" + apiPath + "/?$")) {
                 return null;
@@ -249,12 +307,16 @@ public abstract class WebserverAPI extends HttpServlet {
                 if (tenantId.equals(TenantIdentifier.DEFAULT_TENANT_ID)) {
                     return null;
                 }
+
+                if (Utils.INVALID_WORDS_FOR_TENANTID.contains(tenantId)) {
+                    return null;
+                }
+
                 return tenantId;
             } else {
                 return null;
             }
         }
-        return null;
     }
 
     private String getAppId(HttpServletRequest req) {
@@ -263,10 +325,12 @@ public abstract class WebserverAPI extends HttpServlet {
         if (!apiPath.startsWith("/")) {
             apiPath = "/" + apiPath;
         }
-        if (apiPath.equals("/")) {
-            if (path.equals("") || path.equals("/")) {
-                return null;
-            }
+        if (apiPath.endsWith("/")) {
+            apiPath = apiPath.substring(0, apiPath.length() - 1);
+        }
+
+        if (apiPath.isBlank() && (path.equals("") || path.equals("/"))) {
+            return null;
         } else {
             if (path.matches("^/appid-[a-z0-9-]*(/[a-z0-9-]+)?" + apiPath + "/?$")) {
                 String appId = path.split("/")[1].toLowerCase();
@@ -278,7 +342,6 @@ public abstract class WebserverAPI extends HttpServlet {
                 return null;
             }
         }
-        return null;
     }
 
     private String getConnectionUriDomain(HttpServletRequest req) throws ServletException {
@@ -313,11 +376,23 @@ public abstract class WebserverAPI extends HttpServlet {
         return new AppIdentifier(this.getConnectionUriDomain(req), this.getAppId(req));
     }
 
+    @WithinOtelSpan
     protected AppIdentifier getAppIdentifier(HttpServletRequest req)
             throws ServletException, TenantOrAppNotFoundException {
         AppIdentifier appIdentifier = getAppIdentifierWithoutVerifying(req);
         StorageLayer.getStorage(appIdentifier.getAsPublicTenantIdentifier(), main); // ensure the app exists
         return appIdentifier;
+    }
+
+    /**
+     * Returns true if the given AppIdentifier refers to the root CUD — empty
+     * connectionUriDomain and the default app. APIs that aggregate state across
+     * all CUDs use this to distinguish "give me the cluster-wide view" from
+     * "give me just my CUD" requests.
+     */
+    protected static boolean isRootCUD(AppIdentifier appIdentifier) {
+        return appIdentifier.getConnectionUriDomain().isEmpty()
+                && appIdentifier.getAppId().equals(AppIdentifier.DEFAULT_APP_ID);
     }
 
     protected Storage getTenantStorage(HttpServletRequest req)
@@ -353,6 +428,16 @@ public abstract class WebserverAPI extends HttpServlet {
         return StorageLayer.getStorage(appIdentifier.getAsPublicTenantIdentifier(), main);
     }
 
+    // Rejects a call made on a non-public tenant, but only from `sinceVersion` onwards. Used by app-specific
+    // APIs that historically accepted a tenant in the path and are being restricted to the public tenant from a
+    // specific CDI version, so older clients keep their existing (looser) behaviour.
+    protected void enforcePublicTenantFromVersion(HttpServletRequest req, SemVer sinceVersion)
+            throws BadPermissionException, ServletException {
+        if (getVersionFromRequest(req).greaterThanOrEqualTo(sinceVersion) && getTenantId(req) != null) {
+            throw new BadPermissionException("Only public tenantId can call this app specific API");
+        }
+    }
+
     protected StorageAndUserIdMapping getStorageAndUserIdMappingForTenantSpecificApi(
             HttpServletRequest req, String userId, UserIdType userIdType)
             throws StorageQueryException, TenantOrAppNotFoundException, UnknownUserIdException, ServletException {
@@ -381,8 +466,20 @@ public abstract class WebserverAPI extends HttpServlet {
     }
 
     protected boolean checkIPAccess(HttpServletRequest req, HttpServletResponse resp)
-            throws TenantOrAppNotFoundException, ServletException, IOException {
-        CoreConfig config = Config.getConfig(getTenantIdentifierWithoutVerifying(req), main);
+            throws ServletException, IOException {
+        CoreConfig config = null;
+        try {
+            config = Config.getConfig(getTenantIdentifierWithoutVerifying(req), main);
+        } catch (TenantOrAppNotFoundException e) {
+            // Unknown tenant: fall back to the app's public-tenant IP rules rather than
+            // skipping IP access control (which would let an unknown tenant path segment
+            // bypass an IP allow/deny configured on the app).
+            try {
+                config = Config.getConfig(getAppIdentifierWithoutVerifying(req).getAsPublicTenantIdentifier(), main);
+            } catch (TenantOrAppNotFoundException e2) {
+                return true; // no app either, so no IP access control to apply
+            }
+        }
         String allow = config.getIpAllowRegex();
         String deny = config.getIpDenyRegex();
         if (allow == null && deny == null) {
@@ -486,10 +583,14 @@ public abstract class WebserverAPI extends HttpServlet {
                 } else if (rootCause instanceof BadPermissionException) {
                     sendTextResponse(403, rootCause.getMessage(), resp);
                 } else {
-                    sendTextResponse(500, "Internal Error", resp);
+                    String msg = rootCause.toString();
+                    msg = maskDBPassword(msg);
+                    sendTextResponse(500, msg, resp);
                 }
             } else {
-                sendTextResponse(500, "Internal Error", resp);
+                String msg = e.toString();
+                msg = maskDBPassword(msg);
+                sendTextResponse(500, msg, resp);
             }
         }
         Logging.info(main, tenantIdentifier, "API ended: " + req.getRequestURI() + ". Method: " + req.getMethod(),
@@ -504,30 +605,67 @@ public abstract class WebserverAPI extends HttpServlet {
         }
     }
 
+    public static String maskDBPassword(String log) {
+        String regex = "(\\|db_pass\\|)(.*?)(\\|db_pass\\|)";
+
+        Matcher matcher = Pattern.compile(regex).matcher(log);
+        StringBuffer maskedLog = new StringBuffer();
+
+        while (matcher.find()) {
+            String maskedPassword = "*".repeat(8);
+            matcher.appendReplacement(maskedLog, "|" + maskedPassword + "|");
+        }
+
+        matcher.appendTail(maskedLog);
+        return maskedLog.toString();
+    }
+
     protected String getRIDFromRequest(HttpServletRequest req) {
         return req.getHeader("rId");
     }
 
-    protected SemVer getVersionFromRequest(HttpServletRequest req) throws ServletException {
+    public SemVer getMinCDIVersionForRequest(HttpServletRequest req) throws ServletException {
+        String minCDIVersionStr = null;
         try {
-            SemVer maxCDIVersion = getLatestCDIVersionForRequest(req);
-            String version = req.getHeader("cdi-version");
+            minCDIVersionStr = Config.getConfig(
+                    getAppIdentifierWithoutVerifying(req).getAsPublicTenantIdentifier(), main).getMinCDIVersion();
+        } catch (TenantOrAppNotFoundException e) {
+            // ignore missing app; there is no configured minimum to enforce
+        }
+        if (minCDIVersionStr != null) {
+            return new SemVer(minCDIVersionStr);
+        }
+        return null;
+    }
 
-            if (version != null) {
-                SemVer versionFromRequest = new SemVer(version);
+    protected SemVer getVersionFromRequest(HttpServletRequest req) throws ServletException {
+        SemVer maxCDIVersion = getLatestCDIVersionForRequest(req);
+        String version = req.getHeader("cdi-version");
 
-                if (versionFromRequest.greaterThan(maxCDIVersion)) {
-                    throw new ServletException(
-                            new BadRequestException("cdi-version " + versionFromRequest + " not supported"));
-                }
-
-                return versionFromRequest;
+        if (version != null) {
+            SemVer versionFromRequest;
+            try {
+                versionFromRequest = new SemVer(version);
+            } catch (RuntimeException e) {
+                throw new ServletException(new BadRequestException("cdi-version header is invalid"));
             }
 
-            return maxCDIVersion;
-        } catch (TenantOrAppNotFoundException e) {
-            throw new ServletException(e);
+            if (versionFromRequest.greaterThan(maxCDIVersion)) {
+                throw new ServletException(
+                        new BadRequestException("cdi-version " + versionFromRequest + " not supported"));
+            }
+
+            SemVer minCDIVersion = getMinCDIVersionForRequest(req);
+            if (minCDIVersion != null && versionFromRequest.lesserThan(minCDIVersion)) {
+                throw new ServletException(new BadRequestException(
+                        "cdi-version " + versionFromRequest + " is lower than the minimum allowed version "
+                                + minCDIVersion));
+            }
+
+            return versionFromRequest;
         }
+
+        return maxCDIVersion;
     }
 
     public static class BadRequestException extends Exception {

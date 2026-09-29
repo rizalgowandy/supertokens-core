@@ -17,6 +17,7 @@
 package io.supertokens.emailverification;
 
 import io.supertokens.Main;
+import io.supertokens.ResourceDistributor;
 import io.supertokens.config.Config;
 import io.supertokens.emailverification.exception.EmailAlreadyVerifiedException;
 import io.supertokens.emailverification.exception.EmailVerificationInvalidTokenException;
@@ -44,7 +45,7 @@ public class EmailVerification {
     public static long getEmailVerificationTokenLifetimeForTests(Main main) {
         try {
             return getEmailVerificationTokenLifetime(
-                    new TenantIdentifier(null, null, null), main);
+                    ResourceDistributor.getAppForTesting(), main);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
         }
@@ -62,7 +63,7 @@ public class EmailVerification {
         try {
             Storage storage = StorageLayer.getStorage(main);
             return generateEmailVerificationToken(
-                    new TenantIdentifier(null, null, null), storage,
+                    ResourceDistributor.getAppForTesting(), storage,
                     main, userId, email);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
@@ -82,22 +83,11 @@ public class EmailVerification {
         while (true) {
 
             // we first generate a email verification token
-            byte[] random = new byte[64];
-            byte[] salt = new byte[64];
+            byte[] random = new byte[48];
 
             new SecureRandom().nextBytes(random);
-            new SecureRandom().nextBytes(salt);
 
-            int iterations = 1000;
-            String token = Utils
-                    .toHex(Utils.pbkdf2(Utils.bytesToString(random).toCharArray(), salt, iterations, 64 * 6));
-
-            // we make it URL safe:
-            token = Utils.convertToBase64(token);
-            token = token.replace("=", "");
-            token = token.replace("/", "");
-            token = token.replace("+", "");
-
+            String token = Utils.convertToBase64Url(Utils.bytesToString(random));
             String hashedToken = getHashedToken(token);
 
             try {
@@ -118,7 +108,7 @@ public class EmailVerification {
             EmailVerificationInvalidTokenException, NoSuchAlgorithmException, StorageTransactionLogicException {
         try {
             Storage storage = StorageLayer.getStorage(main);
-            return verifyEmail(new TenantIdentifier(null, null, null), storage, token);
+            return verifyEmail(ResourceDistributor.getAppForTesting(), storage, token);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
         }
@@ -193,7 +183,7 @@ public class EmailVerification {
     public static boolean isEmailVerified(Main main, String userId,
                                           String email) throws StorageQueryException {
         Storage storage = StorageLayer.getStorage(main);
-        return isEmailVerified(new AppIdentifier(null, null), storage,
+        return isEmailVerified(ResourceDistributor.getAppForTesting().toAppIdentifier(), storage,
                 userId, email);
     }
 
@@ -207,7 +197,7 @@ public class EmailVerification {
     public static void revokeAllTokens(Main main, String userId,
                                        String email) throws StorageQueryException {
         Storage storage = StorageLayer.getStorage(main);
-        revokeAllTokens(new TenantIdentifier(null, null, null), storage,
+        revokeAllTokens(ResourceDistributor.getAppForTesting(), storage,
                 userId, email);
     }
 
@@ -222,7 +212,7 @@ public class EmailVerification {
                                      String email) throws StorageQueryException {
         try {
             Storage storage = StorageLayer.getStorage(main);
-            unverifyEmail(new AppIdentifier(null, null), storage, userId, email);
+            unverifyEmail(ResourceDistributor.getAppForTesting().toAppIdentifier(), storage, userId, email);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
         }
@@ -232,6 +222,42 @@ public class EmailVerification {
                                      String email) throws StorageQueryException, TenantOrAppNotFoundException {
         StorageUtils.getEmailVerificationStorage(storage)
                 .unverifyEmail(appIdentifier, userId, email);
+    }
+
+    @TestOnly
+    public static String generateEmailVerificationTokenTheOldWay(Main main, String userId, String email)
+            throws NoSuchAlgorithmException, InvalidKeySpecException, StorageQueryException,
+            TenantOrAppNotFoundException {
+        while(true) {
+            // we first generate a email verification token
+            byte[] random = new byte[64];
+            byte[] salt = new byte[64];
+
+            new SecureRandom().nextBytes(random);
+            new SecureRandom().nextBytes(salt);
+
+            int iterations = 1000;
+            String token = io.supertokens.utils.Utils
+                    .toHex(io.supertokens.utils.Utils.pbkdf2(io.supertokens.utils.Utils.bytesToString(random).toCharArray(), salt, iterations, 64 * 6));
+
+            // we make it URL safe:
+            token = io.supertokens.utils.Utils.convertToBase64(token);
+            token = token.replace("=", "");
+            token = token.replace("/", "");
+            token = token.replace("+", "");
+
+            String hashedToken = EmailVerification.getHashedToken(token);
+
+            try {
+                StorageUtils.getEmailVerificationStorage(StorageLayer.getStorage(main))
+                        .addEmailVerificationToken(ResourceDistributor.getAppForTesting(),
+                                new EmailVerificationTokenInfo(userId, hashedToken,
+                                        System.currentTimeMillis() +
+                                                EmailVerification.getEmailVerificationTokenLifetimeForTests(main), email));
+                return token;
+            } catch (DuplicateEmailVerificationTokenException ignored) {
+            }
+        }
     }
 
     private static String getHashedToken(String token) throws NoSuchAlgorithmException {

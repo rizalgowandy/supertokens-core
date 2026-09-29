@@ -16,11 +16,12 @@
 
 package io.supertokens.test.accountlinking;
 
+import com.google.gson.JsonObject;
 import io.supertokens.Main;
 import io.supertokens.ProcessState;
 import io.supertokens.authRecipe.AuthRecipe;
 import io.supertokens.emailpassword.EmailPassword;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.featureflag.EE_FEATURES;
 import io.supertokens.featureflag.FeatureFlagTestContent;
 import io.supertokens.passwordless.Passwordless;
@@ -29,14 +30,15 @@ import io.supertokens.pluginInterface.RECIPE_ID;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
+import io.supertokens.pluginInterface.authRecipe.LoginMethod;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateEmailException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.exceptions.StorageTransactionLogicException;
-import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.passwordless.exception.DuplicateLinkCodeHashException;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.test.TestingProcessManager;
 import io.supertokens.test.Utils;
+import io.supertokens.test.httpRequest.HttpResponseException;
 import io.supertokens.thirdparty.ThirdParty;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -47,13 +49,18 @@ import org.junit.rules.TestRule;
 import java.io.IOException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.Assert.*;
 
 public class GetUserByAccountInfoTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -95,14 +102,34 @@ public class GetUserByAccountInfoTest {
                 code.userInputCode, null).user;
     }
 
+    AuthRecipeUserInfo createWebauthnUser(Main main, String email) throws HttpResponseException, IOException {
+        JsonObject responseUser = io.supertokens.test.webauthn.Utils.registerUserWithCredentials(main, email).getAsJsonObject("user");
+
+        List<String> tenantIds = new ArrayList<>();
+        List<String> credentialIds = new ArrayList<>();
+        responseUser.getAsJsonObject("webauthn").getAsJsonArray("credentialIds").forEach(e -> credentialIds.add(e.getAsString()));
+        responseUser.getAsJsonArray("loginMethods").forEach(
+                e -> e.getAsJsonObject().getAsJsonArray("tenantIds")
+                        .forEach(t -> tenantIds.add(t.getAsString())));
+
+
+        LoginMethod lm = new LoginMethod(responseUser.getAsJsonArray("loginMethods").get(0).getAsJsonObject().get("recipeUserId").getAsString(),
+                responseUser.getAsJsonArray("loginMethods").get(0).getAsJsonObject().get("timeJoined").getAsLong(),
+                responseUser.getAsJsonArray("loginMethods").get(0).getAsJsonObject().get("verified").getAsBoolean(),
+                responseUser.getAsJsonArray("loginMethods").get(0).getAsJsonObject().get("email").getAsString(),
+        new LoginMethod.WebAuthN(credentialIds), tenantIds.toArray(String[]::new));
+        return AuthRecipeUserInfo.create(responseUser.get("id").getAsString(),
+                responseUser.get("isPrimaryUser").getAsBoolean(),
+                lm);
+    }
+
     @Test
     public void testListUsersByAccountInfoForUnlinkedAccounts() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -113,12 +140,13 @@ public class GetUserByAccountInfoTest {
         AuthRecipeUserInfo user2 = createThirdPartyUser(process.getProcess(), "google", "userid1", "test2@example.com");
         AuthRecipeUserInfo user3 = createPasswordlessUserWithEmail(process.getProcess(), "test3@example.com");
         AuthRecipeUserInfo user4 = createPasswordlessUserWithPhone(process.getProcess(), "+919876543210");
+        AuthRecipeUserInfo user5 = createWebauthnUser(process.getProcess(), "test1@example.com");
 
         Storage storage = (StorageLayer.getBaseStorage(process.getProcess()));
 
-        AuthRecipeUserInfo userToTest = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+        AuthRecipeUserInfo userToTest = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", null, null, null)[0];
+                "test1@example.com", null, null, null, null)[0];
         assertNotNull(userToTest.getSupertokensUserId());
         assertFalse(userToTest.isPrimaryUser);
         assertEquals(1, userToTest.loginMethods.length);
@@ -126,33 +154,39 @@ public class GetUserByAccountInfoTest {
         assertEquals(RECIPE_ID.EMAIL_PASSWORD, userToTest.loginMethods[0].recipeId);
         assertEquals(user1.getSupertokensUserId(), userToTest.loginMethods[0].getSupertokensUserId());
         assertFalse(userToTest.loginMethods[0].verified);
-        assert(userToTest.loginMethods[0].timeJoined > 0);
+        assertNull(userToTest.loginMethods[0].webauthN);
+        assertNotNull(user5.loginMethods[0].webauthN);
+        assert (userToTest.loginMethods[0].timeJoined > 0);
+
+        String webauthnCredentialId = user5.loginMethods[0].webauthN.credentialIds.get(0);
 
         // test for result
-        assertEquals(user1, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage
-                , false, "test1@example.com", null, null, null)[0]);
-        assertEquals(user2, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage
-                , false, null, null, "google", "userid1")[0]);
-        assertEquals(user2, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage
-                , false, "test2@example.com", null, "google", "userid1")[0]);
-        assertEquals(user3, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage
-                , false, "test3@example.com", null, null, null)[0]);
-        assertEquals(user4, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage
-                , false, null, "+919876543210", null, null)[0]);
+        assertEquals(user1, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage
+                , false, "test1@example.com", null, null, null, null)[0]);
+        assertEquals(user2, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage
+                , false, null, null, "google", "userid1", null)[0]);
+        assertEquals(user2, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage
+                , false, "test2@example.com", null, "google", "userid1", null)[0]);
+        assertEquals(user3, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage
+                , false, "test3@example.com", null, null, null, null)[0]);
+        assertEquals(user4, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage
+                , false, null, "+919876543210", null, null, null)[0]);
+        assertEquals(user5, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage
+                , false, null, null, null, null, webauthnCredentialId)[0]);
 
         // test for no result
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, "test1@example.com", "+919876543210", null, null).length);
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, "test2@example.com", "+919876543210", null, null).length);
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, "test3@example.com", "+919876543210", null, null).length);
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, null, "+919876543210", "google", "userid1").length);
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, "test1@gmail.com", null, "google", "userid1").length);
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, "test3@gmail.com", null, "google", "userid1").length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, "test1@example.com", "+919876543210", null, null, null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, "test2@example.com", "+919876543210", null, null, null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, "test3@example.com", "+919876543210", null, null, null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, null, "+919876543210", "google", "userid1", null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, "test1@gmail.com", null, "google", "userid1", null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, "test3@gmail.com", null, null, null, webauthnCredentialId).length);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -161,11 +195,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testListUsersByAccountInfoForUnlinkedAccountsWithUnionOption() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -179,29 +212,29 @@ public class GetUserByAccountInfoTest {
 
         Storage storage = (StorageLayer.getBaseStorage(process.getProcess()));
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
-                    storage, true, "test1@example.com", "+919876543210", null, null);
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
+                    storage, true, "test1@example.com", "+919876543210", null, null, null);
             assertEquals(2, users.length);
             assertTrue(Arrays.asList(users).contains(user1));
             assertTrue(Arrays.asList(users).contains(user4));
         }
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
-                    storage, true, "test1@example.com", null, "google", "userid1");
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
+                    storage, true, "test1@example.com", null, "google", "userid1", null);
             assertEquals(2, users.length);
             assertTrue(Arrays.asList(users).contains(user1));
             assertTrue(Arrays.asList(users).contains(user2));
         }
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
-                    storage, true, null, "+919876543210", "google", "userid1");
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
+                    storage, true, null, "+919876543210", "google", "userid1", null);
             assertEquals(2, users.length);
             assertTrue(Arrays.asList(users).contains(user4));
             assertTrue(Arrays.asList(users).contains(user2));
         }
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
-                    storage, true, "test1@example.com", "+919876543210", "google", "userid1");
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
+                    storage, true, "test1@example.com", "+919876543210", "google", "userid1", null);
             assertEquals(3, users.length);
             assertTrue(Arrays.asList(users).contains(user1));
             assertTrue(Arrays.asList(users).contains(user2));
@@ -215,11 +248,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testUnknownAccountInfo() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -227,14 +259,14 @@ public class GetUserByAccountInfoTest {
         }
 
         Storage storage = (StorageLayer.getBaseStorage(process.getProcess()));
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, "test1@example.com", null, null, null).length);
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, null, null, "google", "userid1").length);
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, "test3@example.com", null, null, null).length);
-        assertEquals(0, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT, storage,
-                false, null, "+919876543210", null, null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, "test1@example.com", null, null, null, null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, null, null, "google", "userid1", null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, "test3@example.com", null, null, null, null).length);
+        assertEquals(0, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(), storage,
+                false, null, "+919876543210", null, null, null).length);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -243,11 +275,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testListUserByAccountInfoWhenAccountsAreLinked1() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -256,9 +287,11 @@ public class GetUserByAccountInfoTest {
 
         AuthRecipeUserInfo user1 = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password1");
         Thread.sleep(50);
-        AuthRecipeUserInfo user2 = ThirdParty.signInUp(process.getProcess(), "google", "userid1", "test2@example.com").user;
+        AuthRecipeUserInfo user2 = ThirdParty.signInUp(process.getProcess(), "google", "userid1",
+                "test2@example.com").user;
 
-        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId()).user;
+        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                user1.getSupertokensUserId()).user;
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), primaryUser.getSupertokensUserId());
 
         Storage storage = (
@@ -266,21 +299,21 @@ public class GetUserByAccountInfoTest {
 
         primaryUser = AuthRecipe.getUserById(process.getProcess(), user1.getSupertokensUserId());
 
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", null, null, null)[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test1@example.com", null, null, null, null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test2@example.com", null, null, null)[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test2@example.com", null, null, null, null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                null, null, "google", "userid1")[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                null, null, "google", "userid1", null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", null, "google", "userid1")[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test1@example.com", null, "google", "userid1", null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test2@example.com", null, "google", "userid1")[0]);
+                "test2@example.com", null, "google", "userid1", null)[0]);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -289,11 +322,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testListUserByAccountInfoWhenAccountsAreLinked2() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -304,7 +336,8 @@ public class GetUserByAccountInfoTest {
         Thread.sleep(50);
         AuthRecipeUserInfo user2 = EmailPassword.signUp(process.getProcess(), "test2@example.com", "password2");
 
-        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId()).user;
+        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                user1.getSupertokensUserId()).user;
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), primaryUser.getSupertokensUserId());
 
         Storage storage = (
@@ -312,12 +345,12 @@ public class GetUserByAccountInfoTest {
 
         primaryUser = AuthRecipe.getUserById(process.getProcess(), user1.getSupertokensUserId());
 
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", null, null, null)[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test1@example.com", null, null, null, null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test2@example.com", null, null, null)[0]);
+                "test2@example.com", null, null, null, null)[0]);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -326,11 +359,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testListUserByAccountInfoWhenAccountsAreLinked3() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -341,7 +373,8 @@ public class GetUserByAccountInfoTest {
         Thread.sleep(50);
         AuthRecipeUserInfo user2 = createPasswordlessUserWithEmail(process.getProcess(), "test2@example.com");
 
-        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId()).user;
+        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                user1.getSupertokensUserId()).user;
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), primaryUser.getSupertokensUserId());
 
         Storage storage = (
@@ -349,12 +382,12 @@ public class GetUserByAccountInfoTest {
 
         primaryUser = AuthRecipe.getUserById(process.getProcess(), user1.getSupertokensUserId());
 
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", null, null, null)[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test1@example.com", null, null, null, null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test2@example.com", null, null, null)[0]);
+                "test2@example.com", null, null, null, null)[0]);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -363,11 +396,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testListUserByAccountInfoWhenAccountsAreLinked4() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -378,7 +410,8 @@ public class GetUserByAccountInfoTest {
         Thread.sleep(50);
         AuthRecipeUserInfo user2 = createPasswordlessUserWithPhone(process.getProcess(), "+919876543210");
 
-        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId()).user;
+        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                user1.getSupertokensUserId()).user;
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), primaryUser.getSupertokensUserId());
 
         Storage storage = (
@@ -386,15 +419,15 @@ public class GetUserByAccountInfoTest {
 
         primaryUser = AuthRecipe.getUserById(process.getProcess(), user1.getSupertokensUserId());
 
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", null, null, null)[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test1@example.com", null, null, null, null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                null, "+919876543210", null, null)[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                null, "+919876543210", null, null, null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", "+919876543210", null, null)[0]);
+                "test1@example.com", "+919876543210", null, null, null)[0]);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -403,11 +436,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testListUserByAccountInfoWhenAccountsAreLinked5() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -418,7 +450,8 @@ public class GetUserByAccountInfoTest {
         Thread.sleep(50);
         AuthRecipeUserInfo user2 = createThirdPartyUser(process.getProcess(), "google", "userid1", "test2@example.com");
 
-        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId()).user;
+        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                user1.getSupertokensUserId()).user;
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), primaryUser.getSupertokensUserId());
 
         Storage storage = (
@@ -426,21 +459,21 @@ public class GetUserByAccountInfoTest {
 
         primaryUser = AuthRecipe.getUserById(process.getProcess(), user1.getSupertokensUserId());
 
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", null, null, null)[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test1@example.com", null, null, null, null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test2@example.com", null, null, null)[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test2@example.com", null, null, null, null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                null, null, "google", "userid1")[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                null, null, "google", "userid1", null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test1@example.com", null, "google", "userid1")[0]);
-        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+                "test1@example.com", null, "google", "userid1", null)[0]);
+        assertEquals(primaryUser, AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                 storage, false,
-                "test2@example.com", null, "google", "userid1")[0]);
+                "test2@example.com", null, "google", "userid1", null)[0]);
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
@@ -449,11 +482,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testForEmptyResults() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -466,31 +498,33 @@ public class GetUserByAccountInfoTest {
         Thread.sleep(50);
         Passwordless.CreateCodeResponse code = Passwordless.createCode(process.getProcess(), null, "+919876543210",
                 null, null);
-        AuthRecipeUserInfo user3 = Passwordless.consumeCode(process.getProcess(), code.deviceId, code.deviceIdHash, code.userInputCode, null).user;
+        AuthRecipeUserInfo user3 = Passwordless.consumeCode(process.getProcess(), code.deviceId, code.deviceIdHash,
+                code.userInputCode, null).user;
 
 
-        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(), user1.getSupertokensUserId()).user;
+        AuthRecipeUserInfo primaryUser = AuthRecipe.createPrimaryUser(process.getProcess(),
+                user1.getSupertokensUserId()).user;
         AuthRecipe.linkAccounts(process.getProcess(), user2.getSupertokensUserId(), primaryUser.getSupertokensUserId());
         AuthRecipe.linkAccounts(process.getProcess(), user3.getSupertokensUserId(), primaryUser.getSupertokensUserId());
 
         Storage storage = (
                 StorageLayer.getBaseStorage(process.getProcess()));
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                     storage, false,
-                    "test5@example.com", null, null, null);
+                    "test5@example.com", null, null, null, null);
             assertEquals(0, users.length);
         }
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                     storage, false,
-                    null, null, "google", "userid5");
+                    null, null, "google", "userid5", null);
             assertEquals(0, users.length);
         }
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                     storage, false,
-                    null, "+9876", null, null);
+                    null, "+9876", null, null, null);
             assertEquals(0, users.length);
         }
 
@@ -501,11 +535,10 @@ public class GetUserByAccountInfoTest {
     @Test
     public void testGetUserByAccountInfoOrdersUserBasedOnTimeJoined() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -519,7 +552,8 @@ public class GetUserByAccountInfoTest {
         Thread.sleep(50);
         Passwordless.CreateCodeResponse code = Passwordless.createCode(process.getProcess(), null, "+919876543210",
                 null, null);
-        AuthRecipeUserInfo user3 = Passwordless.consumeCode(process.getProcess(), code.deviceId, code.deviceIdHash, code.userInputCode, null).user;
+        AuthRecipeUserInfo user3 = Passwordless.consumeCode(process.getProcess(), code.deviceId, code.deviceIdHash,
+                code.userInputCode, null).user;
         Thread.sleep(50);
         AuthRecipeUserInfo user4 = createEmailPasswordUser(process.getProcess(), "test2@example.com", "password1");
         Thread.sleep(50);
@@ -535,9 +569,9 @@ public class GetUserByAccountInfoTest {
                 StorageLayer.getBaseStorage(process.getProcess()));
 
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                     storage, true, "test1@example.com", null,
-                    null, null);
+                    null, null, null);
 
             assertEquals(3, users.length);
             assertTrue(users[0].timeJoined < users[1].timeJoined);
@@ -545,9 +579,9 @@ public class GetUserByAccountInfoTest {
 
         }
         {
-            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(TenantIdentifier.BASE_TENANT,
+            AuthRecipeUserInfo[] users = AuthRecipe.getUsersByAccountInfo(process.getAppForTesting(),
                     storage, false, "test1@example.com", null,
-                    null, null);
+                    null, null, null);
 
             assertEquals(3, users.length);
             assertTrue(users[0].timeJoined < users[1].timeJoined);

@@ -71,7 +71,8 @@ public class AccessTokenSigningKey extends ResourceDistributor.SingletonResource
             this.transferLegacyKeyToNewTable();
             this.getOrCreateAndGetSigningKeys();
         } catch (StorageQueryException | StorageTransactionLogicException e) {
-            Logging.error(main, appIdentifier.getAsPublicTenantIdentifier(), "Error while fetching access token signing key", false, e);
+            Logging.error(main, appIdentifier.getAsPublicTenantIdentifier(),
+                    "Error while fetching access token signing key", false, e);
         }
     }
 
@@ -84,46 +85,35 @@ public class AccessTokenSigningKey extends ResourceDistributor.SingletonResource
     @TestOnly
     public static AccessTokenSigningKey getInstance(Main main) {
         try {
-            return getInstance(new AppIdentifier(null, null), main);
+            return getInstance(ResourceDistributor.getAppForTesting().toAppIdentifier(), main);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
         }
     }
 
-    public static void loadForAllTenants(Main main, List<AppIdentifier> apps, List<TenantIdentifier> tenantsThatChanged) {
-        try {
-            main.getResourceDistributor().withResourceDistributorLock(() -> {
-                Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> existingResources =
-                        main.getResourceDistributor()
-                                .getAllResourcesWithResourceKey(RESOURCE_KEY);
-                main.getResourceDistributor().clearAllResourcesWithResourceKey(RESOURCE_KEY);
-                for (AppIdentifier app : apps) {
-                    ResourceDistributor.SingletonResource resource = existingResources.get(
-                            new ResourceDistributor.KeyClass(
-                                    app,
-                                    RESOURCE_KEY));
-                    if (resource != null && !tenantsThatChanged.contains(app.getAsPublicTenantIdentifier())) {
-                        main.getResourceDistributor()
-                                .setResource(app,
-                                        RESOURCE_KEY,
-                                        resource);
-                    } else {
-                        try {
-                            main.getResourceDistributor()
-                                    .setResource(
-                                            app,
-                                            RESOURCE_KEY,
-                                            new AccessTokenSigningKey(app, main));
-                        } catch (TenantOrAppNotFoundException e) {
-                            throw new IllegalStateException(e);
-                        }
-                    }
+    public static void loadForAllTenants(Main main, List<AppIdentifier> apps,
+                                         List<TenantIdentifier> tenantsThatChanged) {
+        Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> existingResources =
+                main.getResourceDistributor()
+                        .getAllResourcesWithResourceKey(RESOURCE_KEY);
+        Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> newResources =
+                new HashMap<>();
+        for (AppIdentifier app : apps) {
+            ResourceDistributor.SingletonResource resource = existingResources.get(
+                    new ResourceDistributor.KeyClass(app, RESOURCE_KEY));
+            if (resource != null && !tenantsThatChanged.contains(app.getAsPublicTenantIdentifier())) {
+                newResources.put(new ResourceDistributor.KeyClass(app, RESOURCE_KEY), resource);
+            } else {
+                try {
+                    newResources.put(new ResourceDistributor.KeyClass(app, RESOURCE_KEY),
+                            new AccessTokenSigningKey(app, main));
+                } catch (Exception e) {
+                    Logging.error(main, app.getAsPublicTenantIdentifier(), e.getMessage(), false);
+                    // continue loading other resources
                 }
-                return null;
-            });
-        } catch (ResourceDistributor.FuncException e) {
-            throw new RuntimeException(e);
+            }
         }
+        main.getResourceDistributor().replaceResourcesWithResourceKey(RESOURCE_KEY, newResources);
     }
 
     public synchronized void transferLegacyKeyToNewTable()
@@ -210,8 +200,8 @@ public class AccessTokenSigningKey extends ResourceDistributor.SingletonResource
                 this.appIdentifier.getAsPublicTenantIdentifier(), main);
         CoreConfig config = Config.getConfig(this.appIdentifier.getAsPublicTenantIdentifier(), main);
 
-        final long signingKeyLifetime = config.getAccessTokenDynamicSigningKeyUpdateInterval()
-                + SIGNING_KEY_VALIDITY_OVERLAP * config.getAccessTokenValidity();
+        final long signingKeyLifetime = config.getAccessTokenDynamicSigningKeyUpdateIntervalInMillis()
+                + SIGNING_KEY_VALIDITY_OVERLAP * config.getAccessTokenValidityInMillis();
 
         storage.removeAccessTokenSigningKeysBefore(appIdentifier, System.currentTimeMillis() - signingKeyLifetime);
     }
@@ -222,11 +212,11 @@ public class AccessTokenSigningKey extends ResourceDistributor.SingletonResource
         CoreConfig config = Config.getConfig(appIdentifier.getAsPublicTenantIdentifier(), main);
 
         // Access token signing keys older than this are deleted (ms)
-        final long signingKeyLifetime = config.getAccessTokenDynamicSigningKeyUpdateInterval()
-                + SIGNING_KEY_VALIDITY_OVERLAP * config.getAccessTokenValidity();
+        final long signingKeyLifetime = config.getAccessTokenDynamicSigningKeyUpdateIntervalInMillis()
+                + SIGNING_KEY_VALIDITY_OVERLAP * config.getAccessTokenValidityInMillis();
         // Keys created after this timestamp can be used to sign access tokens (ms) after the overlap period
         final long keysCreatedAfterCanSign = System.currentTimeMillis()
-                - config.getAccessTokenDynamicSigningKeyUpdateInterval() + getDynamicSigningKeyOverlapMS();
+                - config.getAccessTokenDynamicSigningKeyUpdateIntervalInMillis() + getDynamicSigningKeyOverlapMS();
         // Keys created after this timestamp can be used to verify access token signatures (ms)
         final long keysCreatedAfterCanVerify = System.currentTimeMillis() - signingKeyLifetime;
 
@@ -359,8 +349,8 @@ public class AccessTokenSigningKey extends ResourceDistributor.SingletonResource
         // If we didn't explicitly set it, we try to set it to a sensible default. In tests where this matters
         // setDynamicSigningKeyOverlapMS should be used.
         if (Main.isTesting && dynamicSigningKeyOverlapMS == 60000 &&
-                config.getAccessTokenDynamicSigningKeyUpdateInterval() < 60000) {
-            return (int) (config.getAccessTokenDynamicSigningKeyUpdateInterval() / 5);
+                config.getAccessTokenDynamicSigningKeyUpdateIntervalInMillis() < 60000) {
+            return (int) (config.getAccessTokenDynamicSigningKeyUpdateIntervalInMillis() / 5);
         }
         return dynamicSigningKeyOverlapMS;
     }

@@ -43,12 +43,34 @@ core_config_version: 0
 # refresh_token_validity:
 
 
+# (DIFFERENT_ACROSS_APPS | OPTIONAL | Default: 30) integer value. Time in seconds for how long the previously active
+# refresh token remains accepted after a rotation.
+# refresh_token_rotation_grace_period:
+
+
+# (DIFFERENT_ACROSS_APPS | OPTIONAL | Default: 0.05) double value. Fraction between 0 and 0.25 by which access token
+# validity is randomly shortened at issuance. Applied subtractively so the token expiry is never lengthened. Set to 0
+# to disable.
+# access_token_validity_jitter:
+
+
+# (OPTIONAL | Default: "TOKEN_THEFT"). How the reuse of a recently rotated-out refresh token is reported. Values are
+# "TOKEN_THEFT" | "UNAUTHORISED". The session is revoked regardless of this setting.
+# recent_token_reuse_behaviour:
+
+# (OPTIONAL | Default: true) boolean value. If true, the core refuses to start when the base database is missing
+# tables or columns this version needs (a skipped manual migration), and tenant databases with a mismatched schema
+# are not served. If false, mismatches are only logged and just the queries touching the missing schema fail.
+# schema_check_strict_mode:
+
+
+
 # (DIFFERENT_ACROSS_TENANTS | OPTIONAL | Default: 3600000) long value. Time in milliseconds for how long a password
 # reset token / link is valid for.
 # password_reset_token_lifetime:
 
 
-# (DIFFERENT_ACROSS_TENANTS | OPTIONAL | Default: 86400000 (1 day)) long value. Time in milliseconds for how long an 
+# (DIFFERENT_ACROSS_TENANTS | OPTIONAL | Default: 86400000 (1 day)) long value. Time in milliseconds for how long an
 # email verification token / link is valid for.
 # email_verification_token_lifetime:
 
@@ -139,7 +161,7 @@ core_config_version: 0
 
 # (OPTIONAL | Default: null). This is used when deploying the core in SuperTokens SaaS infrastructure. If set, limits
 # what database information is shown to / modifiable by the dev when they query the core to get the information about
-#  their tenants. It only exposes that information when this key is used instead of the regular api_keys config.
+# their tenants. It only exposes that information when this key is used instead of the regular api_keys config.
 # supertokens_saas_secret:
 
 # (DIFFERENT_ACROSS_APPS | OPTIONAL | Default: null). This is used when the core needs to assume a specific CDI version
@@ -148,6 +170,66 @@ core_config_version: 0
 # supertokens_max_cdi_version:
 
 
+# (DIFFERENT_ACROSS_APPS | OPTIONAL | Default: null). The minimum CDI version that the core will accept. Requests
+# using a CDI version lower than this are rejected with a 400. When set to null, all CDI versions supported by the
+# core are accepted.
+# supertokens_min_cdi_version:
+
+
 # (OPTIONAL | Default: null) string value. If specified, the supertokens service will only load the specified CUD even
 # if there are more CUDs in the database and block all other CUDs from being used from this instance.
 # supertokens_saas_load_only_cud:
+
+# (OPTIONAL | Default: null) string value. If specified, the core uses this URL to connect to the OAuth provider
+# public service.
+# oauth_provider_public_service_url:
+
+# (OPTIONAL | Default: null) string value. If specified, the core uses this URL to connect to the OAuth provider admin
+# service.
+# oauth_provider_admin_service_url:
+
+# (OPTIONAL | Default: null) string value. If specified, the core uses this URL to replace the default
+# consent and login URLs to {apiDomain}.
+# oauth_provider_consent_login_base_url:
+
+# (OPTIONAL | Default: oauth_provider_public_service_url) If specified, the core uses this URL to parse responses from
+# the oauth provider when the oauth provider's internal address differs from the known public provider address.
+# oauth_provider_url_configured_in_oauth_provider:
+
+# (Optional | Default: null) string value. The encryption key used for saving OAuth client secret on the database.
+# oauth_client_secret_encryption_key:
+
+# (DIFFERENT_ACROSS_APPS | OPTIONAL | Default: number of available processor cores) int value. If specified,
+# the supertokens core will use the specified number of threads to complete the migration of users.
+# bulk_migration_parallelism:
+
+# (DIFFERENT_ACROSS_APPS | OPTIONAL | Default: 8000) int value. If specified, the supertokens core will load the
+# specified number of users for migrating in one single batch.
+# bulk_migration_batch_size:
+
+# (DIFFERENT_ACROSS_APPS | OPTIONAL | Default: 1000) int value. If specified, the bulk migration will wait between
+# rounds. To disable it, set it to null.
+# bulk_migration_sleep_between_rounds_in_batch_ms:
+
+# (DIFFERENT_ACROSS_APPS | OPTIONAL | Default: 3600000) long value. Time in milliseconds for how long a webauthn
+# account recovery token is valid for.
+# webauthn_recover_account_token_lifetime:
+
+# (OPTIONAL | Default: null) string value. The URL of the OpenTelemetry collector to which the core
+# will send telemetry data. This should be in the format http://<host>:<port> or https://<host>:<port>.
+# otel_collector_connection_uri:
+
+# (OPTIONAL | Default: false) boolean value. Enables or disables the deadlock logger.
+# deadlock_logger_enable:
+
+# (OPTIONAL | Default: null) string value. If specified, uses this URL as ACS URL for handling legacy SAML clients
+# saml_legacy_acs_url:
+
+# (OPTIONAL | Default: https://saml.supertokens.com) string value. Service provider's entity ID.
+# saml_sp_entity_id:
+
+# OPTIONAL | Default: 300000) long value. Duration for which SAML claims will be valid before it is consumed
+# saml_claims_validity:
+
+# OPTIONAL | Default: 300000) long value. Duration for which SAML relay state will be valid before it is consumed
+# saml_relay_state_validity:

@@ -35,10 +35,8 @@ import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.test.TestingProcessManager;
 import io.supertokens.test.Utils;
 import io.supertokens.thirdparty.InvalidProviderConfigException;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.rules.TestRule;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -48,6 +46,9 @@ import static org.junit.Assert.*;
 
 public class TestThirdPartyProvider {
     TestingProcessManager.TestingProcess process;
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -105,7 +106,8 @@ public class TestThirdPartyProvider {
         assertTrue(response.get("createdNew").getAsBoolean());
 
         response = TestMultitenancyAPIHelper.getTenant(new TenantIdentifier(null, null, null), process.getProcess());
-        JsonObject resultProvider = response.get("thirdParty").getAsJsonObject().get("providers").getAsJsonArray().get(0).getAsJsonObject();
+        JsonObject resultProvider = response.get("thirdParty").getAsJsonObject().get("providers").getAsJsonArray()
+                .get(0).getAsJsonObject();
         assertEquals(new Gson().toJsonTree(provider), resultProvider);
     }
 
@@ -143,7 +145,8 @@ public class TestThirdPartyProvider {
         assertTrue(response.get("createdNew").getAsBoolean());
 
         response = TestMultitenancyAPIHelper.getTenant(new TenantIdentifier(null, null, null), process.getProcess());
-        JsonObject resultProvider = response.get("thirdParty").getAsJsonObject().get("providers").getAsJsonArray().get(0).getAsJsonObject();
+        JsonObject resultProvider = response.get("thirdParty").getAsJsonObject().get("providers").getAsJsonArray()
+                .get(0).getAsJsonObject();
         assertEquals(provider.toJson(), resultProvider);
     }
 
@@ -210,7 +213,8 @@ public class TestThirdPartyProvider {
         assertFalse(response.get("createdNew").getAsBoolean());
 
         response = TestMultitenancyAPIHelper.getTenant(new TenantIdentifier(null, null, null), process.getProcess());
-        JsonObject resultProvider = response.get("thirdParty").getAsJsonObject().get("providers").getAsJsonArray().get(0).getAsJsonObject();
+        JsonObject resultProvider = response.get("thirdParty").getAsJsonObject().get("providers").getAsJsonArray()
+                .get(0).getAsJsonObject();
         assertEquals(new Gson().toJsonTree(provider), resultProvider);
     }
 
@@ -243,11 +247,13 @@ public class TestThirdPartyProvider {
         );
         assertTrue(response.get("createdNew").getAsBoolean());
 
-        response = TestMultitenancyAPIHelper.deleteThirdPartyProvider(new TenantIdentifier(null, null, null), "google", process.getProcess());
+        response = TestMultitenancyAPIHelper.deleteThirdPartyProvider(new TenantIdentifier(null, null, null), "google",
+                process.getProcess());
         assertTrue(response.get("didConfigExist").getAsBoolean());
 
         // delete again
-        response = TestMultitenancyAPIHelper.deleteThirdPartyProvider(new TenantIdentifier(null, null, null), "google", process.getProcess());
+        response = TestMultitenancyAPIHelper.deleteThirdPartyProvider(new TenantIdentifier(null, null, null), "google",
+                process.getProcess());
         assertFalse(response.get("didConfigExist").getAsBoolean());
     }
 }

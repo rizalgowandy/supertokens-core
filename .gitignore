@@ -12,6 +12,7 @@ gradle-app.setting
 !cli/jar/**/*.jar
 !downloader/jar/**/*.jar
 !ee/jar/**/*.jar
+!src/main/resources/**/*.jar
 
 *target*
 *.war
@@ -48,3 +49,8 @@ local.properties
 ee/bin
 addDevTag
 addReleaseTag
+
+install-linux.sh
+install-windows.bat
+
+downloader/implementationDependencies.json

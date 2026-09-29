@@ -38,6 +38,9 @@ public class HelloAPITest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -52,12 +55,14 @@ public class HelloAPITest {
     public void testHelloAPIWithBasePath1() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         Utils.setValueInConfig("base_path", "/base");
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        HttpRequestForTesting.disableAddingAppId = true;
 
         String res = HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
                 "http://localhost:3567/base", null, 1000, 1000,
@@ -77,12 +82,14 @@ public class HelloAPITest {
     public void testHelloAPIWithBasePath2() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         Utils.setValueInConfig("base_path", "/hello");
         process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        HttpRequestForTesting.disableAddingAppId = true;
 
         String res = HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
                 "http://localhost:3567/hello", null, 1000, 1000,
@@ -102,7 +109,7 @@ public class HelloAPITest {
     public void testHelloAPIWithBasePath3() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         Utils.setValueInConfig("base_path", "/hello");
@@ -144,14 +151,20 @@ public class HelloAPITest {
                 "http://localhost:3567/hello", // baseUrl + /
                 "http://localhost:3567/hello/", // baseUrl + /
                 "http://localhost:3567/hello/hello", // baseUrl + /hello
-                "http://localhost:3567/hello/hello/", // baseUrl + (hello tenant) + / : works because the hello api doesn't check if that tenant exists
+                "http://localhost:3567/hello/hello/",
+                // baseUrl + (hello tenant) + / : works because the hello api doesn't check if that tenant exists
                 "http://localhost:3567/hello/appid-hello/hello", // baseUrl + app + /hello
                 "http://localhost:3567/hello/appid-hello/hello/", // baseUrl + app + /hello
                 "http://localhost:3567/hello/appid-hello/test/hello", // baseUrl + app + tenant + /hello
+                "http://localhost:3567/hello/appid-hello", // baseUrl + app + /
+                "http://localhost:3567/hello/appid-hello/", // baseUrl + app + /
+                "http://localhost:3567/hello/appid-hello/test", // baseUrl + app + tenant + /
+                "http://localhost:3567/hello/appid-hello/test/", // baseUrl + app + tenant + /
         };
 
-        for (String helloUrl: HELLO_ROUTES) {
-            System.out.println(helloUrl);
+        HttpRequestForTesting.disableAddingAppId = true;
+
+        for (String helloUrl : HELLO_ROUTES) {
             String res = HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
                     helloUrl, null, 1000, 1000,
                     null, Utils.getCdiVersionStringLatestForTests(), "");
@@ -160,10 +173,7 @@ public class HelloAPITest {
         }
 
         String[] NOT_FOUND_ROUTES = new String[]{
-                "http://localhost:3567/hello/appid-hello", // baseUrl + app + /
-                "http://localhost:3567/hello/appid-hello/", // baseUrl + app + /
-                "http://localhost:3567/hello/appid-hello/test", // baseUrl + app + tenant + /
-                "http://localhost:3567/hello/appid-hello/test/", // baseUrl + app + tenant + /
+                "http://localhost:3567/hello/abcd",
         };
 
         // Not found
@@ -186,7 +196,7 @@ public class HelloAPITest {
     public void testWithBasePathThatHelloAPIDoesNotRequireAPIKeys() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         Utils.setValueInConfig("api_keys", "asdfasdfasdf123412341234");
@@ -230,14 +240,21 @@ public class HelloAPITest {
                 "http://localhost:3567/hello", // baseUrl + /
                 "http://localhost:3567/hello/", // baseUrl + /
                 "http://localhost:3567/hello/hello", // baseUrl + /hello
-                "http://localhost:3567/hello/hello/", // baseUrl + (hello tenant) + / : works because the hello api doesn't check if that tenant exists
+                "http://localhost:3567/hello/hello/",
+                // baseUrl + (hello tenant) + / : works because the hello api doesn't check if that tenant exists
                 "http://localhost:3567/hello/appid-hello/hello", // baseUrl + app + /hello
                 "http://localhost:3567/hello/appid-hello/hello/", // baseUrl + app + /hello
                 "http://localhost:3567/hello/appid-hello/test/hello", // baseUrl + app + tenant + /hello
+
+                "http://localhost:3567/hello/appid-hello", // baseUrl + app + /
+                "http://localhost:3567/hello/appid-hello/", // baseUrl + app + /
+                "http://localhost:3567/hello/appid-hello/test", // baseUrl + app + tenant + /
+                "http://localhost:3567/hello/appid-hello/test/", // baseUrl + app + tenant + /
         };
 
-        for (String helloUrl: HELLO_ROUTES) {
-            System.out.println(helloUrl);
+        HttpRequestForTesting.disableAddingAppId = true;
+
+        for (String helloUrl : HELLO_ROUTES) {
             String res = HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
                     helloUrl, null, 1000, 1000,
                     null, Utils.getCdiVersionStringLatestForTests(), "");
@@ -248,10 +265,6 @@ public class HelloAPITest {
         String[] NOT_FOUND_ROUTES = new String[]{
                 "http://localhost:3567/abcd",
                 "http://localhost:3567",
-                "http://localhost:3567/hello/appid-hello", // baseUrl + app + /
-                "http://localhost:3567/hello/appid-hello/", // baseUrl + app + /
-                "http://localhost:3567/hello/appid-hello/test", // baseUrl + app + tenant + /
-                "http://localhost:3567/hello/appid-hello/test/", // baseUrl + app + tenant + /
         };
 
         // Not found
@@ -274,7 +287,7 @@ public class HelloAPITest {
     public void testThatHelloAPIDoesNotRequireAPIKeys() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         Utils.setValueInConfig("api_keys", "asdfasdfasdf123412341234");
@@ -313,18 +326,49 @@ public class HelloAPITest {
                 new JsonObject()
         ), false);
 
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                new TenantIdentifier(null, null, "hellotenant"),
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null,
+                new JsonObject()
+        ), false);
+        Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantConfig(
+                new TenantIdentifier(null, "hello", "hellotenant"),
+                new EmailPasswordConfig(true),
+                new ThirdPartyConfig(true, null),
+                new PasswordlessConfig(true),
+                null, null,
+                new JsonObject()
+        ), false);
+
         String[] HELLO_ROUTES = new String[]{
                 "http://localhost:3567", // /
                 "http://localhost:3567/", // /
                 "http://localhost:3567/hello", // /hello
-                "http://localhost:3567/hello/", // (hello tenant) + / : works because the hello api doesn't check if that tenant exists
+                "http://localhost:3567/hello/",
+                // (hello tenant) + / : works because the hello api doesn't check if that tenant exists
                 "http://localhost:3567/appid-hello/hello", // app + /hello
                 "http://localhost:3567/appid-hello/hello/", // app + /hello
                 "http://localhost:3567/appid-hello/test/hello", // app + tenant + /hello
+
+                "http://localhost:3567/hellotenant",
+                "http://localhost:3567/hellotenant/",
+                "http://localhost:3567/hellotenant/hello",
+
+                "http://localhost:3567/appid-hello", // app + /
+                "http://localhost:3567/appid-hello/", // app + /
+                "http://localhost:3567/appid-hello/public",
+                "http://localhost:3567/appid-hello/public/",
+                "http://localhost:3567/appid-hello/test", // app + tenant + /
+                "http://localhost:3567/appid-hello/test/", // app + tenant + /
+                "http://localhost:3567/appid-hello/hellotenant",
+                "http://localhost:3567/appid-hello/hellotenant/",
+                "http://localhost:3567/appid-hello/hellotenant/hello",
         };
 
-        for (String helloUrl: HELLO_ROUTES) {
-            System.out.println(helloUrl);
+        for (String helloUrl : HELLO_ROUTES) {
             String res = HttpRequestForTesting.sendGETRequest(process.getProcess(), "",
                     helloUrl, null, 1000, 1000,
                     null, Utils.getCdiVersionStringLatestForTests(), "");
@@ -334,10 +378,6 @@ public class HelloAPITest {
 
         String[] NOT_FOUND_ROUTES = new String[]{
                 "http://localhost:3567/abcd",
-                "http://localhost:3567/appid-hello", // app + /
-                "http://localhost:3567/appid-hello/", // app + /
-                "http://localhost:3567/appid-hello/test", // app + tenant + /
-                "http://localhost:3567/appid-hello/test/", // app + tenant + /
         };
 
         // Not found

@@ -28,6 +28,7 @@ import io.supertokens.cronjobs.CronTaskTest;
 import io.supertokens.dashboard.Dashboard;
 import io.supertokens.httpRequest.HttpRequest;
 import io.supertokens.httpRequest.HttpRequestMocking;
+import io.supertokens.multitenancy.Multitenancy;
 import io.supertokens.pluginInterface.ActiveUsersStorage;
 import io.supertokens.pluginInterface.KeyValueInfo;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
@@ -98,6 +99,20 @@ public class Telemetry extends CronTask {
         json.addProperty("appId", app.getAppId());
         json.addProperty("connectionUriDomain", app.getConnectionUriDomain());
 
+        { // website and API domains
+            String websiteDomain = Multitenancy.getWebsiteDomain(
+                    StorageLayer.getStorage(app.getAsPublicTenantIdentifier(), main), app);
+            String apiDomain = Multitenancy.getAPIDomain(
+                    StorageLayer.getStorage(app.getAsPublicTenantIdentifier(), main), app);
+
+            if (websiteDomain != null) {
+                json.addProperty("websiteDomain", websiteDomain);
+            }
+            if (apiDomain != null) {
+                json.addProperty("apiDomain", apiDomain);
+            }
+        }
+
         if (StorageLayer.getBaseStorage(main).getType() == STORAGE_TYPE.SQL) {
             { // Users count across all tenants
                 Storage[] storages = StorageLayer.getStoragesForApp(main, app);
@@ -135,19 +150,20 @@ public class Telemetry extends CronTask {
 
                 json.add("maus", mauArr);
             }
+
         } else {
             json.addProperty("usersCount", -1);
             json.add("dashboardUserEmails", new JsonArray());
             json.add("maus", new JsonArray());
         }
 
-        String url = "https://api.supertokens.io/0/st/telemetry";
+        String url = "https://api.supertokens.com/0/st/telemetry";
 
         // we call the API only if we are not testing the core, of if the request can be mocked (in case a test
         // wants
         // to use this)
         if (!Main.isTesting || HttpRequestMocking.getInstance(main).getMockURL(REQUEST_ID, url) != null) {
-            HttpRequest.sendJsonPOSTRequest(main, REQUEST_ID, url, json, 10000, 10000, 5);
+            HttpRequest.sendJsonPOSTRequest(main, REQUEST_ID, url, json, 10000, 10000, 6);
             ProcessState.getInstance(main).addState(ProcessState.PROCESS_STATE.SENT_TELEMETRY, null);
         }
     }

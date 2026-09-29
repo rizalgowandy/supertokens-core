@@ -27,13 +27,19 @@ import io.supertokens.pluginInterface.LOG_LEVEL;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeStorage;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.exceptions.DbInitException;
 import io.supertokens.pluginInterface.exceptions.InvalidConfigException;
+import io.supertokens.pluginInterface.exceptions.SchemaMismatchException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
-import io.supertokens.pluginInterface.multitenancy.*;
+import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
+import io.supertokens.pluginInterface.multitenancy.MultitenancyStorage;
+import io.supertokens.pluginInterface.multitenancy.TenantConfig;
+import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
+import io.supertokens.pluginInterface.opentelemetry.WithinOtelSpan;
 import io.supertokens.pluginInterface.useridmapping.UserIdMapping;
+import io.supertokens.telemetry.TelemetryProvider;
 import io.supertokens.useridmapping.UserIdType;
 import jakarta.servlet.ServletException;
 import org.jetbrains.annotations.TestOnly;
@@ -44,18 +50,59 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 
 public class StorageLayer extends ResourceDistributor.SingletonResource {
 
     public static final String RESOURCE_KEY = "io.supertokens.storageLayer.StorageLayer";
     private final Storage storage;
     private static URLClassLoader ucl = null;
+    private static Storage storageInstanceForEnv = null;
 
     public Storage getUnderlyingStorage() {
         return storage;
     }
 
     public static Storage getNewStorageInstance(Main main, JsonObject config, TenantIdentifier tenantIdentifier, boolean doNotLog) throws InvalidConfigException {
+        return getNewInstance(main, config, tenantIdentifier, doNotLog);
+    }
+
+    public static void updateConfigJsonFromEnv(Main main, JsonObject configJson) {
+        if (storageInstanceForEnv == null) {
+            Storage result;
+            if (StorageLayer.ucl == null) {
+                result = new Start(main);
+            } else {
+                Storage storageLayer = null;
+                ServiceLoader<Storage> sl = ServiceLoader.load(Storage.class, ucl);
+                for (Storage plugin : sl) {
+                    if (storageLayer == null) {
+                        storageLayer = plugin;
+                    } else {
+                        throw new QuitProgramException(
+                                "Multiple database plugins found. Please make sure that just one plugin is in the "
+                                        + "/plugin" + " "
+                                        + "folder of the installation. Alternatively, please redownload and install "
+                                        + "SuperTokens" + ".");
+                    }
+                }
+                if (storageLayer != null) {
+                    result = storageLayer;
+                } else {
+                    result = new Start(main);
+                }
+            }
+            storageInstanceForEnv = result;
+        }
+
+        storageInstanceForEnv.updateConfigJsonFromEnv(configJson);
+    }
+
+    @WithinOtelSpan
+    private static Storage getNewInstance(Main main, JsonObject config, TenantIdentifier tenantIdentifier, boolean doNotLog) throws InvalidConfigException {
         Storage result;
         if (StorageLayer.ucl == null) {
             result = new Start(main);
@@ -74,7 +121,7 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
                 }
             }
             if (storageLayer != null && !main.isForceInMemoryDB()
-                    && (storageLayer.canBeUsed(config) || CLIOptions.get(main).isForceNoInMemoryDB())) {
+                    && (storageLayer. canBeUsed(config) || CLIOptions.get(main).isForceNoInMemoryDB())) {
                 result = storageLayer;
             } else {
                 result = new Start(main);
@@ -97,9 +144,7 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
         this.storage = storage;
     }
 
-    private StorageLayer(Main main, String pluginFolderPath, JsonObject configJson, TenantIdentifier tenantIdentifier)
-            throws MalformedURLException, InvalidConfigException {
-        Logging.info(main, tenantIdentifier, "Loading storage layer.", true);
+    public static void loadStorageUCL(String pluginFolderPath) throws MalformedURLException {
         File loc = new File(pluginFolderPath);
 
         File[] flist = loc.listFiles(file -> file.getPath().toLowerCase().endsWith(".jar"));
@@ -117,6 +162,12 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
                 StorageLayer.ucl = new URLClassLoader(urls);
             }
         }
+
+    }
+
+    private StorageLayer(Main main, JsonObject configJson, TenantIdentifier tenantIdentifier)
+            throws InvalidConfigException {
+        Logging.info(main, tenantIdentifier, "Loading storage layer.", true);
 
         this.storage = getNewStorageInstance(main, configJson, tenantIdentifier, false);
 
@@ -185,10 +236,10 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
         return (StorageLayer) main.getResourceDistributor().getResource(tenantIdentifier, RESOURCE_KEY);
     }
 
-    public static void initPrimary(Main main, String pluginFolderPath, JsonObject configJson)
+    public static void initPrimary(Main main, JsonObject configJson)
             throws MalformedURLException, InvalidConfigException {
         main.getResourceDistributor().setResource(new TenantIdentifier(null, null, null), RESOURCE_KEY,
-                new StorageLayer(main, pluginFolderPath, configJson, TenantIdentifier.BASE_TENANT));
+                new StorageLayer(main, configJson, TenantIdentifier.BASE_TENANT));
     }
 
     public static void loadAllTenantStorage(Main main, TenantConfig[] tenants)
@@ -208,7 +259,8 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
             Map<String, Storage> idToStorageMap = new HashMap<>();
             for (ResourceDistributor.KeyClass key : normalisedConfigs.keySet()) {
                 // setting doNotLog to true so that plugin loading is not logged here
-                Storage storage = StorageLayer.getNewStorageInstance(main, normalisedConfigs.get(key), key.getTenantIdentifier(), true);
+                Storage storage = StorageLayer.getNewStorageInstance(main, normalisedConfigs.get(key),
+                        key.getTenantIdentifier(), true);
                 String userPoolId = storage.getUserPoolId();
                 String connectionPoolId = storage.getConnectionPoolId();
                 String uniqueId = userPoolId + "~" + connectionPoolId;
@@ -225,6 +277,9 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
 
         // at this point, we have made sure that all the configs are fine and that the storage
         // objects are shared across tenants based on the config of each tenant.
+
+        // Populated inside the lock (fast — no I/O), then consumed after the lock is released.
+        Map<Storage, Set<TenantIdentifier>> storagesToInit = new HashMap<>();
 
         // now we loop through existing storage objects in the main resource distributor and reuse them
         // if the unique ID is the same as the storage objects created above.
@@ -275,39 +330,15 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
                     }
                 }
 
-                // we call init on all the newly saved storage objects.
+                // Build storage → tenants map while holding the lock (no I/O).
+                // initStorage() involves network connections and DDL; those run after
+                // the lock is released via initStoragesInParallel().
                 Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> resources =
                         main.getResourceDistributor()
                                 .getAllResourcesWithResourceKey(RESOURCE_KEY);
-
-                // we are creating this map to find tenantIdentifiers that are associated with each storage.
-                // when we call the initStorage, the storage instance remembers the tenants that need to be created
-                // in case error happens. Whenever the connection is restored, the tenant entries are created on that
-                // storage. If the storage is already live, then it will be a no-op.
-                Map<Storage, Set<TenantIdentifier>> storageToTenantIdentifiersMap = new HashMap<>();
-                // Set tenant identifiers handled by each storage instance before initialising them
                 for (ResourceDistributor.KeyClass key : resources.keySet()) {
-                    if (storageToTenantIdentifiersMap.get(((StorageLayer) resources.get(key)).storage) == null) {
-                        storageToTenantIdentifiersMap.put(((StorageLayer) resources.get(key)).storage, new HashSet<>());
-                    }
-                    storageToTenantIdentifiersMap.get(((StorageLayer) resources.get(key)).storage).add(key.getTenantIdentifier());
-                }
-
-                for (ResourceDistributor.KeyClass key : resources.keySet()) {
-                    ResourceDistributor.SingletonResource resource = resources.get(key);
-
-                    try {
-                        ((StorageLayer) resource).storage.initStorage(false, new ArrayList<>(storageToTenantIdentifiersMap.get(((StorageLayer) resource).storage)));
-                        ((StorageLayer) resource).storage.initFileLogging(
-                                Config.getBaseConfig(main).getInfoLogPath(main),
-                                Config.getBaseConfig(main).getErrorLogPath(main));
-                    } catch (DbInitException e) {
-
-                        Logging.error(main, TenantIdentifier.BASE_TENANT, e.getMessage(), false, e);
-                        // we ignore any exceptions from db here cause it's not the base tenant's db that
-                        // would throw and only tenants belonging to a specific tenant / app. In this case,
-                        // we still want other tenants to continue to work
-                    }
+                    Storage s = ((StorageLayer) resources.get(key)).storage;
+                    storagesToInit.computeIfAbsent(s, k -> new HashSet<>()).add(key.getTenantIdentifier());
                 }
 
                 return null;
@@ -317,6 +348,81 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
         } catch (ResourceDistributor.FuncException e) {
             throw new RuntimeException(e);
         }
+
+        // Connect every pool concurrently now that the ResourceDistributor lock is released.
+        initStoragesInParallel(main, storagesToInit);
+    }
+
+    /**
+     * Loads StorageLayer resources only for the specified changed tenants, without clearing
+     * and rebuilding all storage resources. Reuses existing storage instances when the
+     * userPoolId + connectionPoolId match.
+     */
+    public static void loadStorageForChangedTenants(Main main, TenantConfig[] allTenants,
+                                                     List<TenantIdentifier> tenantsThatChanged)
+            throws InvalidConfigException, IOException {
+        if (tenantsThatChanged == null || tenantsThatChanged.isEmpty()) {
+            return;
+        }
+
+        JsonObject baseConfig = Config.getBaseConfigAsJsonObject(main);
+        Map<Storage, Set<TenantIdentifier>> storagesToInit = new HashMap<>();
+
+        try {
+            main.getResourceDistributor().withResourceDistributorLock(() -> {
+                // Build existing pool ID → storage mapping from current resources
+                Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> existingStorageMap =
+                        main.getResourceDistributor().getAllResourcesWithResourceKey(RESOURCE_KEY);
+                Map<String, Storage> existingPoolToStorage = new HashMap<>();
+                for (ResourceDistributor.SingletonResource resource : existingStorageMap.values()) {
+                    Storage s = ((StorageLayer) resource).storage;
+                    String uniqueId = s.getUserPoolId() + "~" + s.getConnectionPoolId();
+                    existingPoolToStorage.putIfAbsent(uniqueId, s);
+                }
+
+                for (TenantIdentifier changed : tenantsThatChanged) {
+                    try {
+                        JsonObject normConfig = Config.getNormalisedConfigForTenant(
+                                changed, allTenants, baseConfig);
+                        Storage newStorage = getNewStorageInstance(main, normConfig, changed, true);
+                        String userPoolId = newStorage.getUserPoolId();
+                        String connectionPoolId = newStorage.getConnectionPoolId();
+                        String uniqueId = userPoolId + "~" + connectionPoolId;
+
+                        // Reuse existing storage if same pool exists
+                        Storage storageToUse;
+                        boolean isNewPool;
+                        if (existingPoolToStorage.containsKey(uniqueId)) {
+                            storageToUse = existingPoolToStorage.get(uniqueId);
+                            isNewPool = false;
+                        } else {
+                            storageToUse = newStorage;
+                            isNewPool = true;
+                        }
+
+                        storageToUse.setLogLevels(Config.getBaseConfig(main).getLogLevels(main));
+
+                        // Remove old resource for this tenant (if any), then set new
+                        main.getResourceDistributor().removeResource(changed, RESOURCE_KEY);
+                        main.getResourceDistributor().setResource(changed, RESOURCE_KEY,
+                                new StorageLayer(storageToUse));
+
+                        // Defer initStorage() to after the lock — it involves TCP + DDL.
+                        if (isNewPool) {
+                            storagesToInit.computeIfAbsent(storageToUse, k -> new HashSet<>()).add(changed);
+                            existingPoolToStorage.put(uniqueId, storageToUse);
+                        }
+                    } catch (Exception e) {
+                        Logging.error(main, TenantIdentifier.BASE_TENANT, e.getMessage(), false, e);
+                    }
+                }
+                return null;
+            });
+        } catch (ResourceDistributor.FuncException e) {
+            throw new RuntimeException(e);
+        }
+
+        initStoragesInParallel(main, storagesToInit);
     }
 
     public static Storage getBaseStorage(Main main) {
@@ -554,4 +660,150 @@ public class StorageLayer extends ResourceDistributor.SingletonResource {
             throw new IllegalStateException("should never come here");
         }
     }
+
+    public static List<StorageAndUserIdMapping> findStorageAndUserIdMappingForBulkUserImport(
+            AppIdentifier appIdentifier, Storage[] storages, List<String> userIds,
+            UserIdType userIdType) throws StorageQueryException {
+
+        if (storages.length == 0) {
+            throw new IllegalStateException("No storages were provided!");
+        }
+
+        if (storages[0].getType() != STORAGE_TYPE.SQL) {
+            // for non sql plugin, there will be only one storage as multitenancy is not supported
+            assert storages.length == 1;
+            List<StorageAndUserIdMapping> results = new ArrayList<>();
+            for(String userId : userIds) {
+                results.add(new StorageAndUserIdMapping(storages[0], new UserIdMapping(userId, null, null)));
+            }
+            return results;
+        }
+        List<StorageAndUserIdMapping> allMappingsFromAllStorages = new ArrayList<>();
+        if (userIdType != UserIdType.ANY) {
+            for (Storage storage : storages) {
+                List<UserIdMapping> mappingsFromThisStorage = io.supertokens.useridmapping.UserIdMapping.getMultipleUserIdMapping(
+                        appIdentifier, storage,
+                        userIds, userIdType);
+
+                if (userIdType == UserIdType.EXTERNAL) {
+                    for (UserIdMapping mapping : mappingsFromThisStorage) {
+                        allMappingsFromAllStorages.add(new StorageAndUserIdMappingForBulkImport(storage, mapping,
+                                mapping.externalUserId));
+                    }
+                    continue;
+                }
+
+                List<String> existingIdsInStorage = ((AuthRecipeStorage) storage).findExistingUserIds(appIdentifier,
+                        userIds);
+                for(String existingId : existingIdsInStorage) {
+                    UserIdMapping mappingForId = mappingsFromThisStorage.stream()
+                                .filter(userIdMapping -> userIdMapping.superTokensUserId.equals(existingId))
+                                .findFirst().orElse(null);
+                    allMappingsFromAllStorages.add(new StorageAndUserIdMappingForBulkImport(storage, mappingForId, existingId));
+                }
+            }
+        } else {
+            throw new IllegalStateException("UserIdType.ANY is not supported for this method");
+        }
+        return allMappingsFromAllStorages;
+    }
+
+    /**
+     * Initializes each storage's connection pool concurrently using virtual threads.
+     *
+     * <p>This method MUST be called outside any ResourceDistributor lock. {@code initStorage()}
+     * opens TCP connections to the database and runs DDL (CREATE TABLE IF NOT EXISTS). That
+     * work can take tens of milliseconds per pool; holding the global lock during I/O would
+     * serialize all N pools and turn startup into O(N × latency) instead of O(latency).
+     *
+     * <p>The map is deduplicated by {@link Storage} instance, so each pool is initialized
+     * exactly once even when multiple tenants share a pool. We are therefore not actually
+     * racing concurrent {@code initStorage()} calls against each other on a single instance —
+     * the per-instance {@code isAlreadyInitialised} guard inside {@code initStorage()} is
+     * belt-and-braces, not load-bearing here.
+     *
+     * <p>Per-pool failures are caught and logged: a non-base-tenant pool failure must not
+     * prevent other tenants from working, matching the original sequential behaviour.
+     * {@code DbInitException} is the only checked exception either method declares;
+     * {@code initFileLogging} declares none. Anything else (e.g. a {@link RuntimeException}
+     * from log file setup) is propagated through {@code CompletableFuture.join()} as a
+     * {@code CompletionException} and crashes startup — same as the original sequential
+     * code, where such an exception would have escaped the for-loop unhandled.
+     *
+     * <p>The try-with-resources {@code close()} on the executor runs after {@code join()},
+     * by which time all tasks have terminated, so close is effectively a no-op.
+     */
+    private static void initStoragesInParallel(Main main, Map<Storage, Set<TenantIdentifier>> storagesToInit) {
+        if (storagesToInit.isEmpty()) {
+            return;
+        }
+        String infoLogPath = Config.getBaseConfig(main).getInfoLogPath(main);
+        String errorLogPath = Config.getBaseConfig(main).getErrorLogPath(main);
+        TelemetryProvider telemetry = TelemetryProvider.getInstance(main);
+
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            for (Map.Entry<Storage, Set<TenantIdentifier>> entry : storagesToInit.entrySet()) {
+                Storage storage = entry.getKey();
+                List<TenantIdentifier> tenants = new ArrayList<>(entry.getValue());
+                futures.add(CompletableFuture.runAsync(() -> {
+                    try {
+                        storage.initStorage(false, tenants);
+                        storage.initFileLogging(infoLogPath, errorLogPath, telemetry);
+                    } catch (DbInitException e) {
+                        Logging.error(main, TenantIdentifier.BASE_TENANT, e.getMessage(), false, e);
+                        return;
+                    }
+                    // Schema verification runs once per storage (the plugin caches a success), so this is a
+                    // no-op for already-verified pools on refresh. A tenant mismatch never takes the core down:
+                    // in strict mode (schema_check_strict_mode, the default) the storage refuses all queries
+                    // until a re-verification passes (retrySchemaVerification runs one every minute, so the
+                    // storage resumes within a minute of the migration being applied); in non-strict mode it
+                    // stays fully in use and only queries touching the missing schema fail (with a hint).
+                    try {
+                        storage.verifySchema(Config.getBaseConfig(main).getSchemaCheckStrictMode());
+                    } catch (SchemaMismatchException e) {
+                        Logging.error(main, TenantIdentifier.BASE_TENANT,
+                                "Schema verification failed for storage of tenants " + tenants + ": "
+                                        + e.getMessage(), true, e);
+                        ProcessState.getInstance(main).addState(ProcessState.PROCESS_STATE.SCHEMA_MISMATCH, e);
+                    } catch (StorageQueryException e) {
+                        Logging.error(main, TenantIdentifier.BASE_TENANT,
+                                "Could not verify schema for storage of tenants " + tenants, false, e);
+                    }
+                }, executor));
+            }
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        }
+    }
+
+    /**
+     * Gives every loaded storage whose schema verification has not yet passed another chance to pass. Called
+     * from {@link io.supertokens.cronjobs.syncCoreConfigWithDb.SyncCoreConfigWithDb} every minute, so a tenant
+     * storage that is refusing queries in strict mode (schema_check_strict_mode) resumes within a minute of
+     * the operator applying the migration SQL - no restart or tenant change needed. A storage that already
+     * verified returns from {@link Storage#verifySchema} without touching the database, so this is free in the
+     * steady state; a still-mismatched storage costs one schema-inspection query per run and stays quiet here,
+     * because the startup ERROR log already carries the full report.
+     */
+    public static void retrySchemaVerification(Main main) {
+        Set<Storage> storages = new HashSet<>();
+        for (ResourceDistributor.SingletonResource resource : main.getResourceDistributor()
+                .getAllResourcesWithResourceKey(RESOURCE_KEY).values()) {
+            storages.add(((StorageLayer) resource).storage);
+        }
+        boolean strictMode = Config.getBaseConfig(main).getSchemaCheckStrictMode();
+        for (Storage storage : storages) {
+            try {
+                storage.verifySchema(strictMode);
+            } catch (SchemaMismatchException e) {
+                // still mismatched: the startup ERROR already reported the details, and affected queries
+                // carry a hint pointing at it - do not repeat the report every minute
+            } catch (StorageQueryException e) {
+                Logging.debug(main, TenantIdentifier.BASE_TENANT,
+                        "Could not re-verify the database schema: " + e.getMessage());
+            }
+        }
+    }
+
 }

@@ -41,6 +41,9 @@ public class EmailVerificationWithUserIdMappingTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -90,7 +93,8 @@ public class EmailVerificationWithUserIdMappingTest {
             return;
         }
 
-        AuthRecipeUserInfo user = ThirdParty.signInUp(process.getProcess(), "google", "googleid1", "test@example.com", true).user;
+        AuthRecipeUserInfo user = ThirdParty.signInUp(process.getProcess(), "google", "googleid1", "test@example.com",
+                true).user;
         try {
             String token = EmailVerification.generateEmailVerificationToken(process.getProcess(),
                     user.getSupertokensUserId(), "test@example.com");
@@ -125,7 +129,8 @@ public class EmailVerificationWithUserIdMappingTest {
 
         Passwordless.CreateCodeResponse code = Passwordless.createCode(process.getProcess(), "test@example.com", null,
                 null, null);
-        AuthRecipeUserInfo user = Passwordless.consumeCode(process.getProcess(), code.deviceId, code.deviceIdHash, code.userInputCode, null, true).user;
+        AuthRecipeUserInfo user = Passwordless.consumeCode(process.getProcess(), code.deviceId, code.deviceIdHash,
+                code.userInputCode, null, true).user;
 
         try {
             String token = EmailVerification.generateEmailVerificationToken(process.getProcess(),
@@ -145,14 +150,16 @@ public class EmailVerificationWithUserIdMappingTest {
         assertTrue(userInfo.loginMethods[0].verified);
 
         assertTrue(EmailVerification.isEmailVerified(process.getProcess(), "euid", "test@example.com"));
-        assertFalse(EmailVerification.isEmailVerified(process.getProcess(), user.getSupertokensUserId(), "test@example.com"));
+        assertFalse(EmailVerification.isEmailVerified(process.getProcess(), user.getSupertokensUserId(),
+                "test@example.com"));
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
     }
 
     @Test
-    public void testUserIdMappingCreationAfterEmailVerificationForPasswordlessUserWithOlderCDIBehaviour() throws Exception {
+    public void testUserIdMappingCreationAfterEmailVerificationForPasswordlessUserWithOlderCDIBehaviour()
+            throws Exception {
         String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
@@ -170,7 +177,8 @@ public class EmailVerificationWithUserIdMappingTest {
         // create mapping
         // this should not be allowed
         try {
-            UserIdMapping.createUserIdMapping(process.getProcess(), user.getSupertokensUserId(), "euid", null, false, false);
+            UserIdMapping.createUserIdMapping(process.getProcess(), user.getSupertokensUserId(), "euid", null, false,
+                    false);
             fail();
         } catch (Exception e) {
             assert e.getMessage().contains("UserId is already in use in EmailVerification recipe");

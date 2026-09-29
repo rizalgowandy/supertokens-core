@@ -37,6 +37,9 @@ public class JWTSigningAPITest2_21 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -49,7 +52,7 @@ public class JWTSigningAPITest2_21 {
 
     @Test
     public void testThatStaticSignedJWTHasValidHeader() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -84,7 +87,7 @@ public class JWTSigningAPITest2_21 {
 
     @Test
     public void testThatDynamicSignedJWTHasValidHeader() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));

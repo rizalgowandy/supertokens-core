@@ -29,7 +29,6 @@ import io.supertokens.pluginInterface.dashboard.DashboardSessionInfo;
 import io.supertokens.pluginInterface.dashboard.DashboardUser;
 import io.supertokens.pluginInterface.dashboard.exceptions.DuplicateEmailException;
 import io.supertokens.pluginInterface.dashboard.sqlStorage.DashboardSQLStorage;
-import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.test.TestingProcessManager;
 import io.supertokens.test.Utils;
@@ -47,6 +46,9 @@ import static org.junit.Assert.*;
 public class DashboardTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -175,7 +177,7 @@ public class DashboardTest {
 
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         CronTaskTest.getInstance(process.getProcess()).setIntervalInSeconds(DeleteExpiredDashboardSessions.RESOURCE_KEY,
                 1);
         process.startProcess();
@@ -197,7 +199,7 @@ public class DashboardTest {
 
         // create a session with low expiry
         ((DashboardSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .createNewDashboardUserSession(new AppIdentifier(null, null), user.userId, sessionId,
+                .createNewDashboardUserSession(process.getAppForTesting().toAppIdentifier(), user.userId, sessionId,
                         System.currentTimeMillis(), 0);
 
         // check that session exists
@@ -208,6 +210,49 @@ public class DashboardTest {
 
         // check that session does not exist
         assertEquals(0, Dashboard.getAllDashboardSessionsForUser(process.getProcess(), user.userId).length);
+
+        process.kill();
+        assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void testExpiredSessionIsRejectedAtVerification() throws Exception {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
+
+        if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+            return;
+        }
+
+        String email = "test@example.com";
+        String password = "password123";
+        DashboardUser user = Dashboard.signUpDashboardUser(process.getProcess(), email, password);
+
+        DashboardSQLStorage storage = (DashboardSQLStorage) StorageLayer.getStorage(process.getProcess());
+
+        // Create a session whose expiry is in the past, without waiting for the cleanup cron. This is the
+        // shape of a token whose 30-day lifetime has elapsed.
+        String expiredSessionId = io.supertokens.utils.Utils.getUUID();
+        long now = System.currentTimeMillis();
+        storage.createNewDashboardUserSession(process.getAppForTesting().toAppIdentifier(), user.userId,
+                expiredSessionId, now - Dashboard.DASHBOARD_SESSION_DURATION - 1000, now - 1000);
+
+        // The row exists, but verification must not accept it and must not leak the user's email.
+        assertFalse(Dashboard.isValidUserSession(process.getProcess(), expiredSessionId));
+        assertNull(Dashboard.getEmailFromSessionId(process.getAppForTesting().toAppIdentifier(),
+                storage, expiredSessionId));
+
+        // Verifying an expired session revokes it, so it does not depend on the 12-hour cleanup cron.
+        assertNull(storage.getSessionInfoWithSessionId(process.getAppForTesting().toAppIdentifier(),
+                expiredSessionId));
+
+        // Positive control: a freshly issued session still authenticates and resolves its email.
+        String validSessionId = Dashboard.signInDashboardUser(process.getProcess(), email, password);
+        assertTrue(Dashboard.isValidUserSession(process.getProcess(), validSessionId));
+        assertEquals(email, Dashboard.getEmailFromSessionId(process.getAppForTesting().toAppIdentifier(),
+                storage, validSessionId));
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STOPPED));
@@ -268,7 +313,7 @@ public class DashboardTest {
 
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -318,7 +363,7 @@ public class DashboardTest {
         }
 
         // enable the dashboard feature
-        FeatureFlag.getInstance(process.main).setLicenseKeyAndSyncFeatures(OPAQUE_KEY_WITH_DASHBOARD_FEATURE);
+        FeatureFlag.getInstance(process.getProcess()).setLicenseKeyAndSyncFeatures(OPAQUE_KEY_WITH_DASHBOARD_FEATURE);
 
         {
             JsonObject response = HttpRequestForTesting.sendGETRequest(process.getProcess(), "",

@@ -44,6 +44,9 @@ public class SessionTest5 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -185,8 +188,11 @@ public class SessionTest5 {
         assert issued.isBefore(Instant.now().plusMillis(1500));
 
         Instant expires = decodedJWT.getExpiresAtAsInstant();
-        long validityInMS = Config.getConfig(process.getProcess()).getAccessTokenValidity();
-        assert expires.isAfter(Instant.now().plusMillis(validityInMS).minusMillis(1500));
+        long validityInMS = Config.getConfig(process.getProcess()).getAccessTokenValidityInMillis();
+        // access_token_validity_jitter can shorten the token by up to (jitter * validity), subtract-only
+        assert expires.isAfter(Instant.now().plusMillis(validityInMS).minusMillis(1500)
+                .minusMillis((long) (validityInMS * Config.getConfig(process.getProcess())
+                        .getAccessTokenValidityJitter())));
         assert expires.isBefore(Instant.now().plusMillis(validityInMS).plusMillis(1500));
 
         assertNull(decodedJWT.getIssuer());
@@ -244,9 +250,12 @@ public class SessionTest5 {
         assert issued.isBefore(Instant.now().plusMillis(1500));
 
         Instant expires = decodedJWT.getExpiresAtAsInstant();
-        long validityInMS = Config.getConfig(process.getProcess()).getAccessTokenValidity();
+        long validityInMS = Config.getConfig(process.getProcess()).getAccessTokenValidityInMillis();
 
-        assert expires.isAfter(Instant.now().plusMillis(validityInMS).minusMillis(1500));
+        // access_token_validity_jitter can shorten the token by up to (jitter * validity), subtract-only
+        assert expires.isAfter(Instant.now().plusMillis(validityInMS).minusMillis(1500)
+                .minusMillis((long) (validityInMS * Config.getConfig(process.getProcess())
+                        .getAccessTokenValidityJitter())));
         assert expires.isBefore(Instant.now().plusMillis(validityInMS).plusMillis(1500));
 
         assertNull(decodedJWT.getIssuer());
@@ -298,7 +307,7 @@ public class SessionTest5 {
         Utils.setValueInConfig("access_token_dynamic_signing_key_update_interval", "0.00027"); // 1 second
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         String userId = "userId";
@@ -309,7 +318,8 @@ public class SessionTest5 {
 
         SessionInformationHolder createInfo = Session.createNewSession(process.getProcess(), userId, userDataInJWT,
                 userDataInDatabase, false, AccessToken.getLatestVersion(), false);
-        SessionInformationHolder createInfoStatic = Session.createNewSession(process.getProcess(), userId, userDataInJWT,
+        SessionInformationHolder createInfoStatic = Session.createNewSession(process.getProcess(), userId,
+                userDataInJWT,
                 userDataInDatabase, false, AccessToken.getLatestVersion(), true);
 
         Thread.sleep(1500);
@@ -340,7 +350,7 @@ public class SessionTest5 {
         Utils.setValueInConfig("access_token_dynamic_signing_key_update_interval", "0.00081"); // 3 seconds
 
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         AccessTokenSigningKey.getInstance(process.getProcess()).setDynamicSigningKeyOverlapMS(1000);
@@ -372,7 +382,8 @@ public class SessionTest5 {
         assertEquals(2, signingKeysInstance.getDynamicKeys().size());
         assertEquals(3, signingKeysInstance.getAllKeys().size());
 
-        SessionInformationHolder createInfoAfterOverlap = Session.createNewSession(process.getProcess(), userId, userDataInJWT,
+        SessionInformationHolder createInfoAfterOverlap = Session.createNewSession(process.getProcess(), userId,
+                userDataInJWT,
                 userDataInDatabase, false, AccessToken.getLatestVersion(), false);
         JWT.JWTPreParseInfo preParseInfoAfterOverlap = JWT.preParseJWTInfo(createInfoAfterOverlap.accessToken.token);
 

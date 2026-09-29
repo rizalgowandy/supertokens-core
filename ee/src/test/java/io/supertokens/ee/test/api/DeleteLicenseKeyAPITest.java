@@ -38,14 +38,14 @@ public class DeleteLicenseKeyAPITest {
 
     @Test
     public void testDeletingLicenseKeyWhenItIsNotSet() throws Exception {
-        String[] args = { "../../" };
+        String[] args = {"../../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         Assert.assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
 
         // check that no LicenseKey exits
         try {
-            FeatureFlag.getInstance(process.main).getLicenseKey();
+            FeatureFlag.getInstance(process.getProcess()).getLicenseKey();
             fail();
         } catch (NoLicenseKeyFoundException ignored) {
         }
@@ -58,7 +58,7 @@ public class DeleteLicenseKeyAPITest {
 
         // check that no LicenseKey exits
         try {
-            FeatureFlag.getInstance(process.main).getLicenseKey();
+            FeatureFlag.getInstance(process.getProcess()).getLicenseKey();
             fail();
         } catch (NoLicenseKeyFoundException ignored) {
         }
@@ -69,7 +69,7 @@ public class DeleteLicenseKeyAPITest {
 
     @Test
     public void testDeletingLicenseKey() throws Exception {
-        String[] args = { "../../" };
+        String[] args = {"../../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         Assert.assertNotNull(process.checkOrWaitForEvent(PROCESS_STATE.STARTED));
@@ -90,7 +90,7 @@ public class DeleteLicenseKeyAPITest {
 
         // check that no LicenseKey exits
         try {
-            FeatureFlag.getInstance(process.main).getLicenseKey();
+            FeatureFlag.getInstance(process.getProcess()).getLicenseKey();
             fail();
         } catch (NoLicenseKeyFoundException ignored) {
         }

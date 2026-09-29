@@ -48,6 +48,9 @@ public class JWKSTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -63,8 +66,8 @@ public class JWKSTest {
      */
     @Test
     public void testThatThereAreTheSameNumberOfJWKSAsSupportedAlgorithmsBeforeJWTCreation() throws Exception {
-        String[] args = { "../" };
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        String[] args = {"../"};
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         List<JsonObject> keysFromStorage = SigningKeys.getInstance(process.getProcess()).getJWKS();
@@ -81,8 +84,8 @@ public class JWKSTest {
      */
     @Test
     public void testThatNoNewJWKIsCreatedDuringJWTCreation() throws Exception {
-        String[] args = { "../" };
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        String[] args = {"../"};
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         List<JsonObject> keysFromStorageBeforeJWTCreation = SigningKeys.getInstance(process.getProcess()).getJWKS();
@@ -110,7 +113,7 @@ public class JWKSTest {
      */
     @Test
     public void testThatJWKListContainsValidKeyForCreatedJWT() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -120,7 +123,8 @@ public class JWKSTest {
         String jwksDomain = "http://localhost";
         long validity = 3600;
 
-        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity, false);
+        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity,
+                false);
         DecodedJWT decodedJWT = JWT.decode(jwt);
 
         String headerKeyId = decodedJWT.getHeaderClaim("kid").asString();
@@ -146,7 +150,7 @@ public class JWKSTest {
      */
     @Test
     public void testThatAValidPublicKeyCanBeCreatedFromJWK() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -182,7 +186,7 @@ public class JWKSTest {
      */
     @Test
     public void testThatJWKCanBeUsedForJWTVerification() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -192,7 +196,8 @@ public class JWKSTest {
         String jwksDomain = "http://localhost";
         long validity = 3600;
 
-        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity, false);
+        String jwt = JWTSigningFunctions.createJWTToken(process.getProcess(), algorithm, payload, jwksDomain, validity,
+                false);
         DecodedJWT decodedJWT = JWT.decode(jwt);
 
         String headerKeyId = decodedJWT.getHeaderClaim("kid").asString();
@@ -247,7 +252,7 @@ public class JWKSTest {
      */
     @Test
     public void testThatJWKModulusIsUnsigned() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 

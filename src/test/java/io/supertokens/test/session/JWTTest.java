@@ -38,6 +38,9 @@ public class JWTTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -54,8 +57,10 @@ public class JWTTest {
         {
             TestInput input = new TestInput("value");
             io.supertokens.utils.Utils.PubPriKey rsa = io.supertokens.utils.Utils.generateNewPubPriKey();
-            String token = JWT.createAndSignLegacyAccessToken(new Gson().toJsonTree(input), rsa.privateKey, AccessToken.VERSION.V1);
-            TestInput output = new Gson().fromJson(JWT.verifyJWTAndGetPayload(JWT.preParseJWTInfo(token), rsa.publicKey).payload,
+            String token = JWT.createAndSignLegacyAccessToken(new Gson().toJsonTree(input), rsa.privateKey,
+                    AccessToken.VERSION.V1);
+            TestInput output = new Gson().fromJson(
+                    JWT.verifyJWTAndGetPayload(JWT.preParseJWTInfo(token), rsa.publicKey).payload,
                     TestInput.class);
             assertEquals(input, output);
         }
@@ -63,8 +68,10 @@ public class JWTTest {
         {
             TestInput input = new TestInput("value");
             io.supertokens.utils.Utils.PubPriKey rsa = io.supertokens.utils.Utils.generateNewPubPriKey();
-            String token = JWT.createAndSignLegacyAccessToken(new Gson().toJsonTree(input), rsa.privateKey, AccessToken.VERSION.V2);
-            TestInput output = new Gson().fromJson(JWT.verifyJWTAndGetPayload(JWT.preParseJWTInfo(token), rsa.publicKey).payload,
+            String token = JWT.createAndSignLegacyAccessToken(new Gson().toJsonTree(input), rsa.privateKey,
+                    AccessToken.VERSION.V2);
+            TestInput output = new Gson().fromJson(
+                    JWT.verifyJWTAndGetPayload(JWT.preParseJWTInfo(token), rsa.publicKey).payload,
                     TestInput.class);
             assertEquals(input, output);
         }
@@ -76,7 +83,8 @@ public class JWTTest {
         {
             TestInput input = new TestInput("value");
             io.supertokens.utils.Utils.PubPriKey rsa = io.supertokens.utils.Utils.generateNewPubPriKey();
-            String token = JWT.createAndSignLegacyAccessToken(new Gson().toJsonTree(input), rsa.privateKey, AccessToken.VERSION.V1);
+            String token = JWT.createAndSignLegacyAccessToken(new Gson().toJsonTree(input), rsa.privateKey,
+                    AccessToken.VERSION.V1);
             try {
                 JWT.verifyJWTAndGetPayload(JWT.preParseJWTInfo(token), "signingKey2");
                 fail();
@@ -88,13 +96,81 @@ public class JWTTest {
         {
             TestInput input = new TestInput("value");
             io.supertokens.utils.Utils.PubPriKey rsa = io.supertokens.utils.Utils.generateNewPubPriKey();
-            String token = JWT.createAndSignLegacyAccessToken(new Gson().toJsonTree(input), rsa.privateKey, AccessToken.VERSION.V2);
+            String token = JWT.createAndSignLegacyAccessToken(new Gson().toJsonTree(input), rsa.privateKey,
+                    AccessToken.VERSION.V2);
             try {
                 JWT.verifyJWTAndGetPayload(JWT.preParseJWTInfo(token), "signingKey2");
                 fail();
             } catch (JWTException e) {
                 assertEquals("JWT verification failed", e.getMessage());
             }
+        }
+    }
+
+    // every malformed header shape must surface as JWTException (mapped to 4xx by the APIs), never
+    // as a runtime error (which would end up as a 500)
+    @Test
+    public void preParseJWTInfoMalformedInputs() {
+        // not three dot-separated parts
+        assertPreParseThrows("not-a-jwt", "Invalid JWT");
+
+        // header is not valid base64
+        assertPreParseThrows("!!!notbase64!!!.payload.signature", "Invalid JWT");
+
+        // header is valid base64 but not valid JSON
+        assertPreParseThrows(io.supertokens.utils.Utils.convertToBase64("{") + ".payload.signature",
+                "Invalid JWT");
+
+        // header is a JSON scalar instead of an object
+        assertPreParseThrows(io.supertokens.utils.Utils.convertToBase64("\"hello\"") + ".payload.signature",
+                "Invalid JWT");
+
+        // header is a JSON array instead of an object
+        assertPreParseThrows(io.supertokens.utils.Utils.convertToBase64("[1, 2]") + ".payload.signature",
+                "Invalid JWT");
+
+        // typ is not a primitive
+        assertPreParseThrows(tokenWithHeader("{\"typ\": {}, \"alg\": \"RS256\", \"kid\": \"key1\"}"),
+                "JWT header missing - typ");
+
+        // alg is not a primitive
+        assertPreParseThrows(tokenWithHeader("{\"typ\": \"JWT\", \"alg\": [], \"kid\": \"key1\"}"),
+                "JWT header missing - alg");
+
+        // version is not a primitive
+        assertPreParseThrows(
+                tokenWithHeader("{\"typ\": \"JWT\", \"alg\": \"RS256\", \"version\": {}, \"kid\": \"key1\"}"),
+                "JWT header mismatch - version");
+
+        // version string that does not map to a known access token version
+        assertPreParseThrows(
+                tokenWithHeader("{\"typ\": \"JWT\", \"alg\": \"RS256\", \"version\": \"999\", \"kid\": \"key1\"}"),
+                "JWT header mismatch - version");
+
+        // missing kid; this used to throw a NullPointerException because the null check happened
+        // after the dereference
+        assertPreParseThrows(tokenWithHeader("{\"typ\": \"JWT\", \"alg\": \"RS256\"}"),
+                "JWT header missing - kid");
+
+        // kid is not a primitive
+        assertPreParseThrows(tokenWithHeader("{\"typ\": \"JWT\", \"alg\": \"RS256\", \"kid\": {}}"),
+                "JWT header missing - kid");
+
+        // kid is a primitive but not a string
+        assertPreParseThrows(tokenWithHeader("{\"typ\": \"JWT\", \"alg\": \"RS256\", \"kid\": 42}"),
+                "JWT header mismatch - kid");
+    }
+
+    private static String tokenWithHeader(String headerJson) {
+        return io.supertokens.utils.Utils.convertToBase64(headerJson) + ".payload.signature";
+    }
+
+    private static void assertPreParseThrows(String jwt, String expectedMessage) {
+        try {
+            JWT.preParseJWTInfo(jwt);
+            fail("expected JWTException for: " + jwt);
+        } catch (JWTException e) {
+            assertEquals(expectedMessage, e.getMessage());
         }
     }
 

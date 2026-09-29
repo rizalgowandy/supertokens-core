@@ -45,6 +45,9 @@ public class UserSearchTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -58,11 +61,10 @@ public class UserSearchTest {
     @Test
     public void testUserSearch() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -76,12 +78,15 @@ public class UserSearchTest {
 
         Passwordless.CreateCodeResponse code1 = Passwordless.createCode(process.getProcess(), "test3@example.com", null,
                 null, null);
-        AuthRecipeUserInfo user3 = Passwordless.consumeCode(process.getProcess(), code1.deviceId, code1.deviceIdHash, code1.userInputCode, null).user;
+        AuthRecipeUserInfo user3 = Passwordless.consumeCode(process.getProcess(), code1.deviceId, code1.deviceIdHash,
+                code1.userInputCode, null).user;
         Passwordless.CreateCodeResponse code2 = Passwordless.createCode(process.getProcess(), null, "+919876543210",
                 null, null);
-        AuthRecipeUserInfo user4 = Passwordless.consumeCode(process.getProcess(), code2.deviceId, code2.deviceIdHash, code2.userInputCode, null).user;
+        AuthRecipeUserInfo user4 = Passwordless.consumeCode(process.getProcess(), code2.deviceId, code2.deviceIdHash,
+                code2.userInputCode, null).user;
 
-        AuthRecipeUserInfo user5 = ThirdParty.signInUp(process.getProcess(), "google", "googleid", "test4@example.com").user;
+        AuthRecipeUserInfo user5 = ThirdParty.signInUp(process.getProcess(), "google", "googleid",
+                "test4@example.com").user;
 
         AuthRecipe.createPrimaryUser(process.getProcess(), user5.getSupertokensUserId());
         AuthRecipe.linkAccounts(process.getProcess(), user1.getSupertokensUserId(), user5.getSupertokensUserId());

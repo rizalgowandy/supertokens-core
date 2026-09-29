@@ -19,17 +19,17 @@ package io.supertokens.webserver.api.passwordless;
 import com.google.gson.JsonObject;
 import io.supertokens.Main;
 import io.supertokens.StorageAndUserIdMapping;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.multitenancy.exception.BadPermissionException;
 import io.supertokens.passwordless.Passwordless;
 import io.supertokens.passwordless.Passwordless.FieldUpdate;
-import io.supertokens.passwordless.exceptions.PhoneNumberChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.PhoneNumberChangeNotAllowedException;
 import io.supertokens.passwordless.exceptions.UserWithoutContactInfoException;
 import io.supertokens.pluginInterface.RECIPE_ID;
 import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
 import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateEmailException;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
@@ -69,7 +69,8 @@ public class UserAPI extends WebserverAPI {
         // logic based on: https://app.code2flow.com/flowcharts/617a9aafdc97ee415448db74
         String userId = InputParser.getQueryParamOrThrowError(req, "userId", true);
         String email = InputParser.getQueryParamOrThrowError(req, "email", true);
-        String phoneNumber = Utils.normalizeIfPhoneNumber(InputParser.getQueryParamOrThrowError(req, "phoneNumber", true));
+        String phoneNumber = Utils.normalizeIfPhoneNumber(
+                InputParser.getQueryParamOrThrowError(req, "phoneNumber", true));
 
         if (Stream.of(userId, email, phoneNumber).filter(Objects::nonNull).count() != 1) {
             throw new ServletException(
@@ -129,7 +130,7 @@ public class UserAPI extends WebserverAPI {
                 result.addProperty("status", "OK");
 
                 JsonObject userJson =
-                        getVersionFromRequest(req).greaterThanOrEqualTo(SemVer.v4_0) ? user.toJson() :
+                        getVersionFromRequest(req).greaterThanOrEqualTo(SemVer.v4_0) ? user.toJson(getVersionFromRequest(req).greaterThanOrEqualTo(SemVer.v5_3)) :
                                 user.toJsonWithoutAccountLinking();
 
                 if (getVersionFromRequest(req).lesserThan(SemVer.v3_0)) {

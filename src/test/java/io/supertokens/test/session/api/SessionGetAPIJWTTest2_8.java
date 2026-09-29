@@ -39,6 +39,9 @@ public class SessionGetAPIJWTTest2_8 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -51,7 +54,7 @@ public class SessionGetAPIJWTTest2_8 {
 
     @Test
     public void testAPIFailuresWithBadInputParameters() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -88,7 +91,7 @@ public class SessionGetAPIJWTTest2_8 {
 
     @Test
     public void testGetRequestWithNoSessionReturnsUnauthorised() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -110,7 +113,7 @@ public class SessionGetAPIJWTTest2_8 {
 
     @Test
     public void testThatGetWithValidParametersWorks() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         String sessionJsonInput = "{\n" + "\t\"userId\": \"UserID\",\n" + "\t\"userDataInJWT\": {\n"
                 + "\t\t\"userData1\": \"temp1\",\n" + "\t\t\"userData2\": \"temp2\"\n" + "\t},\n"

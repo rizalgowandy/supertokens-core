@@ -41,6 +41,9 @@ public class PasswordlessCreateCodeAPITest2_11 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -53,7 +56,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testEmail() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -77,7 +80,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testEmailWithUserInputCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -102,7 +105,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testPhone() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -125,7 +128,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testPhoneWithUserInputCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -150,7 +153,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testResend() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -181,7 +184,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testResendWithUserInputCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -214,7 +217,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testResendWithAlreadyUsedUserInputCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -248,7 +251,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testResendWithNonExistantDeviceId() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -272,7 +275,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testAllIds() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -307,7 +310,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testEmailAndPhone() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -341,7 +344,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testEmailAndDeviceId() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -375,7 +378,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testPhoneAndDeviceId() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -414,7 +417,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
      */
     @Test
     public void testMalformedDeviceId() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -450,7 +453,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
      */
     @Test
     public void testUserInputCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -483,7 +486,7 @@ public class PasswordlessCreateCodeAPITest2_11 {
 
     @Test
     public void testNoParams() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));

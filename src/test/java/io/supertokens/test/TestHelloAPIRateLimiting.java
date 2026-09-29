@@ -48,6 +48,9 @@ public class TestHelloAPIRateLimiting {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -150,7 +153,8 @@ public class TestHelloAPIRateLimiting {
     public void testThatTheHelloAPIisRateLimited() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        // Use startProcess=false to avoid race condition with feature flag setup
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         process.startProcess();
@@ -163,7 +167,7 @@ public class TestHelloAPIRateLimiting {
         createApps(process);
 
         // Call 5 requests rapidly
-        for (int i=0; i < 5; i++) {
+        for (int i = 0; i < 5; i++) {
             assertTrue(callHello(new TenantIdentifier(null, "a1", null), process.getProcess()));
         }
 
@@ -182,7 +186,8 @@ public class TestHelloAPIRateLimiting {
     public void testThatTheHelloAPIisRateLimitedPerApp() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        // Use startProcess=false to avoid race condition with feature flag setup
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         process.startProcess();
@@ -195,7 +200,7 @@ public class TestHelloAPIRateLimiting {
         createApps(process);
 
         // Call 5 requests rapidly
-        for (int i=0; i < 5; i++) {
+        for (int i = 0; i < 5; i++) {
             assertTrue(callHello(new TenantIdentifier(null, "a1", null), process.getProcess()));
         }
 
@@ -203,7 +208,7 @@ public class TestHelloAPIRateLimiting {
         assertFalse(callHello(new TenantIdentifier(null, "a1", null), process.getProcess()));
 
         // But it should work for a different app
-        for (int i=0; i < 5; i++) {
+        for (int i = 0; i < 5; i++) {
             assertTrue(callHello(new TenantIdentifier(null, "a2", null), process.getProcess()));
             assertTrue(callHello(new TenantIdentifier(null, "a3", null), process.getProcess()));
         }
@@ -226,7 +231,8 @@ public class TestHelloAPIRateLimiting {
     public void testThatTheHelloAPIisRateLimited2() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        // Use startProcess=false to avoid race condition with feature flag setup
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
         process.startProcess();
@@ -239,7 +245,7 @@ public class TestHelloAPIRateLimiting {
         createApps(process);
 
         // Call 5 requests rapidly
-        for (int i=0; i < 5; i++) {
+        for (int i = 0; i < 5; i++) {
             assertTrue(callHello2(new TenantIdentifier(null, null, null), process.getProcess()));
         }
 

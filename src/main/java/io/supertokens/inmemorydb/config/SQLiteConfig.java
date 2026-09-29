@@ -16,10 +16,24 @@
 
 package io.supertokens.inmemorydb.config;
 
+import io.supertokens.pluginInterface.MigrationMode;
+import org.jetbrains.annotations.TestOnly;
+
 import java.util.HashSet;
 import java.util.Set;
 
 public class SQLiteConfig {
+
+    private static MigrationMode migrationMode = MigrationMode.MIGRATED;
+
+    @TestOnly
+    public static void setMigrationModeForTesting(MigrationMode mode) {
+        migrationMode = mode;
+    }
+
+    public MigrationMode getMigrationMode() {
+        return migrationMode;
+    }
 
     public static Set<String> getValidFields() {
         return new HashSet<>();
@@ -163,5 +177,61 @@ public class SQLiteConfig {
 
     public String getDashboardSessionsTable() {
         return "dashboard_user_sessions";
+    }
+
+    public String getOAuthClientsTable() {
+        return "oauth_clients";
+    }
+
+    public String getOAuthRefreshTokenMappingTable() {
+        return "oauth_refresh_token_mapping";
+    }
+
+    public String getOAuthM2MTokensTable() {
+        return "oauth_m2m_tokens";
+    }
+
+    public String getOAuthM2MTokenStatsTable() {
+        return "oauth_m2m_token_stats";
+    }
+
+    public String getOAuthSessionsTable() {
+        return "oauth_sessions";
+    }
+
+    public String getOAuthLogoutChallengesTable() {
+        return "oauth_logout_challenges";
+    }
+
+    public String getWebAuthNUsersTable(){ return "webauthn_users";}
+
+    public String getWebAuthNUserToTenantTable(){ return "webauthn_user_to_tenant"; }
+
+    public String getWebAuthNGeneratedOptionsTable() { return  "webauthn_generated_options"; }
+
+    public String getWebAuthNCredentialsTable() { return "webauthn_credentials"; }
+
+    public String getWebAuthNAccountRecoveryTokenTable() { return "webauthn_account_recovery_tokens"; }
+
+    public String getSAMLClientsTable() { return "saml_clients"; }
+
+    public String getSAMLRelayStateTable() { return "saml_relay_state"; }
+
+    public String getSAMLClaimsTable() { return "saml_claims"; }
+
+    public String getRecipeUserAccountInfosTable() {
+        return "recipe_user_account_infos";
+    }
+
+    public String getRecipeUserTenantsTable() {
+        return "recipe_user_tenants";
+    }
+
+    public String getPrimaryUserTenantsTable() {
+        return "primary_user_tenants";
+    }
+
+    public String getActivityLogTable() {
+        return "activity_log";
     }
 }

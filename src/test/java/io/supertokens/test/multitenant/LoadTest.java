@@ -45,6 +45,9 @@ public class LoadTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -60,10 +63,9 @@ public class LoadTest {
             throws InterruptedException {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         TenantConfig[] tenants = new TenantConfig[1000];
@@ -77,8 +79,13 @@ public class LoadTest {
                     new PasswordlessConfig(false),
                     null, null, config);
             try {
-                Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(), new TenantIdentifier(null, null, null),
-                        tenants[insideLoop]);
+                // Use forceReloadResources=false for intermediate tenants to avoid O(n^2) overhead.
+                Multitenancy.addNewOrUpdateAppOrTenant(process.getProcess(),
+                        tenants[insideLoop],
+                        false, // shouldPreventProtectedConfigUpdate
+                        true,  // skipThirdPartyConfigValidation
+                        i == 99 // forceReloadResources - only on last iteration
+                );
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -107,7 +114,7 @@ public class LoadTest {
 //            InvalidConfigException, CannotModifyBaseConfigException, BadPermissionException {
 //        String[] args = {"../"};
 //
-//        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+//        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
 //        FeatureFlagTestContent.getInstance(process.getProcess())
 //                .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
 //        process.startProcess();

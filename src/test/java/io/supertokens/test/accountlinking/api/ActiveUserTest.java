@@ -22,7 +22,7 @@ import io.supertokens.Main;
 import io.supertokens.ProcessState;
 import io.supertokens.authRecipe.AuthRecipe;
 import io.supertokens.emailpassword.EmailPassword;
-import io.supertokens.emailpassword.exceptions.EmailChangeNotAllowedException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.EmailChangeNotAllowedException;
 import io.supertokens.featureflag.EE_FEATURES;
 import io.supertokens.featureflag.FeatureFlagTestContent;
 import io.supertokens.passwordless.Passwordless;
@@ -56,6 +56,9 @@ import static org.junit.Assert.assertNotNull;
 public class ActiveUserTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -101,11 +104,10 @@ public class ActiveUserTest {
     @Test
     public void testActiveUserIsRemovedAfterLinkingAccounts() throws Exception {
         String[] args = {"../"};
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
                         EE_FEATURES.ACCOUNT_LINKING, EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -113,7 +115,8 @@ public class ActiveUserTest {
         }
 
         AuthRecipeUserInfo user1 = createEmailPasswordUser(process.getProcess(), "test@example.com", "password");
-        AuthRecipeUserInfo user2 = createThirdPartyUser(process.getProcess(), "google", "google-user", "test@example.com");
+        AuthRecipeUserInfo user2 = createThirdPartyUser(process.getProcess(), "google", "google-user",
+                "test@example.com");
 
         {
             // Update active user
@@ -145,7 +148,7 @@ public class ActiveUserTest {
 
         {
             // Link accounts
-            AuthRecipe.createPrimaryUser(process.main, user2.getSupertokensUserId());
+            AuthRecipe.createPrimaryUser(process.getProcess(), user2.getSupertokensUserId());
 
             JsonObject params = new JsonObject();
             params.addProperty("recipeUserId", user1.getSupertokensUserId());

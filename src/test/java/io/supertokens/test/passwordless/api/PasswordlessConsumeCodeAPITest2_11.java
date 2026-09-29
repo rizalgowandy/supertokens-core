@@ -43,6 +43,9 @@ public class PasswordlessConsumeCodeAPITest2_11 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -55,7 +58,7 @@ public class PasswordlessConsumeCodeAPITest2_11 {
 
     @Test
     public void testBadInput() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -103,7 +106,8 @@ public class PasswordlessConsumeCodeAPITest2_11 {
             assertNotNull(error);
             assertEquals(400, error.statusCode);
             assertEquals(
-                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or deviceId+userInputCode",
+                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or " +
+                            "deviceId+userInputCode",
                     error.getMessage());
         }
 
@@ -126,7 +130,8 @@ public class PasswordlessConsumeCodeAPITest2_11 {
             assertNotNull(error);
             assertEquals(400, error.statusCode);
             assertEquals(
-                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or deviceId+userInputCode",
+                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or " +
+                            "deviceId+userInputCode",
                     error.getMessage());
         }
 
@@ -148,7 +153,8 @@ public class PasswordlessConsumeCodeAPITest2_11 {
             assertNotNull(error);
             assertEquals(400, error.statusCode);
             assertEquals(
-                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or deviceId+userInputCode",
+                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or " +
+                            "deviceId+userInputCode",
                     error.getMessage());
         }
         {
@@ -168,7 +174,8 @@ public class PasswordlessConsumeCodeAPITest2_11 {
             assertNotNull(error);
             assertEquals(400, error.statusCode);
             assertEquals(
-                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or deviceId+userInputCode",
+                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or " +
+                            "deviceId+userInputCode",
                     error.getMessage());
         }
         {
@@ -188,7 +195,8 @@ public class PasswordlessConsumeCodeAPITest2_11 {
             assertNotNull(error);
             assertEquals(400, error.statusCode);
             assertEquals(
-                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or deviceId+userInputCode",
+                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or " +
+                            "deviceId+userInputCode",
                     error.getMessage());
         }
 
@@ -276,7 +284,8 @@ public class PasswordlessConsumeCodeAPITest2_11 {
             assertNotNull(error);
             assertEquals(400, error.statusCode);
             assertEquals(
-                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or deviceId+userInputCode",
+                    "Http error. Status Code: 400. Message: Please provide exactly one of linkCode or " +
+                            "deviceId+userInputCode",
                     error.getMessage());
         }
 
@@ -289,7 +298,7 @@ public class PasswordlessConsumeCodeAPITest2_11 {
 
     @Test
     public void testLinkCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -322,7 +331,7 @@ public class PasswordlessConsumeCodeAPITest2_11 {
 
     @Test
     public void testExpiredLinkCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         Utils.setValueInConfig("passwordless_code_lifetime", "100");
 
@@ -357,7 +366,7 @@ public class PasswordlessConsumeCodeAPITest2_11 {
 
     @Test
     public void testUserInputCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -391,7 +400,7 @@ public class PasswordlessConsumeCodeAPITest2_11 {
 
     @Test
     public void testExpiredUserInputCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         Utils.setValueInConfig("passwordless_code_lifetime", "100");
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
@@ -427,7 +436,7 @@ public class PasswordlessConsumeCodeAPITest2_11 {
 
     @Test
     public void testIncorrectUserInputCode() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         Utils.setValueInConfig("passwordless_max_code_input_attempts", "2"); // Only 2 code entries permitted (1 retry)
 

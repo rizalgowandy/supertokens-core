@@ -20,11 +20,13 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.i18n.phonenumbers.PhoneNumberUtil;
 import com.google.i18n.phonenumbers.NumberParseException;
+import com.google.i18n.phonenumbers.PhoneNumberUtil;
 import com.google.i18n.phonenumbers.Phonenumber;
 import io.supertokens.Main;
 import io.supertokens.config.Config;
+import io.supertokens.featureflag.EE_FEATURES;
+import io.supertokens.featureflag.FeatureFlag;
 import io.supertokens.jwt.exceptions.UnsupportedJWTSigningAlgorithmException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.exceptions.StorageTransactionLogicException;
@@ -43,6 +45,8 @@ import javax.crypto.spec.SecretKeySpec;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.math.BigInteger;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
@@ -50,11 +54,13 @@ import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Base64.Decoder;
 import java.util.Base64.Encoder;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 public class Utils {
 
@@ -427,4 +433,47 @@ public class Utils {
     public static JsonElement toJsonTreeWithNulls(Object src) {
         return new GsonBuilder().serializeNulls().create().toJsonTree(src);
     }
+
+
+    public static boolean isAccountLinkingEnabled(Main main, AppIdentifier appIdentifier) throws StorageQueryException, TenantOrAppNotFoundException {
+        return Arrays.stream(FeatureFlag.getInstance(main, appIdentifier).getEnabledFeatures())
+                .anyMatch(t -> t == EE_FEATURES.ACCOUNT_LINKING || t == EE_FEATURES.MFA);
+    }
+
+    public static boolean containsUrl(String urlToCheckIfContains, String whatItContains, boolean careForProtocol)
+            throws MalformedURLException {
+        URL urlToCheck = new URL(urlToCheckIfContains);
+        URL urlToLookFor = new URL(whatItContains);
+
+        String originalHost = urlToCheck.getHost() + urlToCheck.getPort();
+        String wantedHost = urlToLookFor.getHost() + urlToLookFor.getPort();
+        if (careForProtocol){
+            originalHost = urlToCheck.getProtocol() + originalHost;
+            wantedHost = urlToCheck.getProtocol() + wantedHost;
+        }
+
+        return originalHost.equals(wantedHost);
+    }
+
+    public static String camelCaseToSnakeCase(String toSnakeCase) {
+        if (toSnakeCase != null) {
+            String regex = "([a-z])([A-Z]+)";
+            String replacement = "$1_$2";
+            toSnakeCase = toSnakeCase
+                    .replaceAll(
+                            regex, replacement)
+                    .toLowerCase();
+        }
+        return toSnakeCase;
+    }
+
+    public static String snakeCaseToCamelCase(String toCamelCase) {
+        if(toCamelCase != null) {
+            toCamelCase = Pattern.compile("_([a-z])")
+                    .matcher(toCamelCase)
+                    .replaceAll(m -> m.group(1).toUpperCase());
+        }
+        return toCamelCase;
+    }
+
 }

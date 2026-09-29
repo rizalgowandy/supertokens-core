@@ -18,6 +18,7 @@ package io.supertokens.usermetadata;
 
 import com.google.gson.JsonObject;
 import io.supertokens.Main;
+import io.supertokens.ResourceDistributor;
 import io.supertokens.pluginInterface.Storage;
 import io.supertokens.pluginInterface.StorageUtils;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
@@ -30,6 +31,8 @@ import io.supertokens.utils.MetadataUtils;
 import org.jetbrains.annotations.TestOnly;
 
 import javax.annotation.Nonnull;
+import java.util.ArrayList;
+import java.util.Map;
 
 public class UserMetadata {
 
@@ -40,7 +43,7 @@ public class UserMetadata {
         Storage storage = StorageLayer.getStorage(main);
         try {
             return updateUserMetadata(
-                    new AppIdentifier(null, null), storage,
+                    ResourceDistributor.getAppForTesting().toAppIdentifier(), storage,
                     userId, metadataUpdate);
         } catch (TenantOrAppNotFoundException e) {
             throw new IllegalStateException(e);
@@ -76,10 +79,46 @@ public class UserMetadata {
         }
     }
 
+    public static void updateMultipleUsersMetadata(AppIdentifier appIdentifier, Storage storage,
+                                                @Nonnull Map<String, JsonObject> metadataToUpdateByUserId)
+            throws StorageQueryException, StorageTransactionLogicException, TenantOrAppNotFoundException {
+        UserMetadataSQLStorage umdStorage = StorageUtils.getUserMetadataStorage(storage);
+
+        try {
+            umdStorage.startTransaction(con -> {
+                Map<String, JsonObject> originalMetadatas = umdStorage.getMultipleUsersMetadatas_Transaction(appIdentifier, con,
+                        new ArrayList<>(metadataToUpdateByUserId.keySet()));
+
+                // updating only the already existing ones. The others don't need update
+                for(Map.Entry<String, JsonObject> metadataByUserId : originalMetadatas.entrySet()){
+                    JsonObject originalMetadata = metadataByUserId.getValue();
+                    String userId = metadataByUserId.getKey();
+                    JsonObject updatedMetadata = originalMetadata == null ? new JsonObject() : originalMetadata;
+                    MetadataUtils.shallowMergeMetadataUpdate(updatedMetadata, metadataToUpdateByUserId.get(userId));
+                    metadataToUpdateByUserId.put(userId, updatedMetadata);
+                }
+
+                try {
+                    umdStorage.setMultipleUsersMetadatas_Transaction(appIdentifier, con, metadataToUpdateByUserId);
+                    umdStorage.commitTransaction(con);
+                } catch (TenantOrAppNotFoundException e) {
+                    throw new StorageTransactionLogicException(e);
+                }
+
+                return null;
+            });
+        } catch (StorageTransactionLogicException e) {
+            if (e.actualException instanceof TenantOrAppNotFoundException) {
+                throw (TenantOrAppNotFoundException) e.actualException;
+            }
+            throw e;
+        }
+    }
+
     @TestOnly
     public static JsonObject getUserMetadata(Main main, @Nonnull String userId) throws StorageQueryException {
         Storage storage = StorageLayer.getStorage(main);
-        return getUserMetadata(new AppIdentifier(null, null), storage, userId);
+        return getUserMetadata(ResourceDistributor.getAppForTesting().toAppIdentifier(), storage, userId);
     }
 
     public static JsonObject getUserMetadata(AppIdentifier appIdentifier, Storage storage,
@@ -96,10 +135,40 @@ public class UserMetadata {
         return metadata;
     }
 
+    /**
+     * Get metadata for multiple users in a single query.
+     * Returns a map of userId to their metadata.
+     * Users without metadata will have null as their value.
+     */
+    public static Map<String, JsonObject> getBulkUserMetadata(AppIdentifier appIdentifier, Storage storage,
+                                                              @Nonnull java.util.List<String> userIds)
+            throws StorageQueryException {
+        if (userIds == null || userIds.isEmpty()) {
+            return new java.util.HashMap<>();
+        }
+
+        UserMetadataSQLStorage umdStorage = StorageUtils.getUserMetadataStorage(storage);
+
+        try {
+            return umdStorage.startTransaction(con -> {
+                Map<String, JsonObject> metadataMap = umdStorage.getMultipleUsersMetadatas_Transaction(appIdentifier, con, userIds);
+
+                // Ensure all requested userIds are in the result, with null for missing ones
+                Map<String, JsonObject> result = new java.util.HashMap<>();
+                for (String userId : userIds) {
+                    result.put(userId, metadataMap.get(userId)); // null if not found
+                }
+                return result;
+            });
+        } catch (StorageTransactionLogicException e) {
+            throw new StorageQueryException(e);
+        }
+    }
+
     @TestOnly
     public static void deleteUserMetadata(Main main, @Nonnull String userId) throws StorageQueryException {
         Storage storage = StorageLayer.getStorage(main);
-        deleteUserMetadata(new AppIdentifier(null, null), storage, userId);
+        deleteUserMetadata(ResourceDistributor.getAppForTesting().toAppIdentifier(), storage, userId);
     }
 
     public static void deleteUserMetadata(AppIdentifier appIdentifier, Storage storage,

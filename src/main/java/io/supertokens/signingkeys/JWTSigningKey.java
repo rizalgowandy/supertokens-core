@@ -20,6 +20,7 @@ import io.supertokens.Main;
 import io.supertokens.ResourceDistributor;
 import io.supertokens.exceptions.QuitProgramException;
 import io.supertokens.jwt.exceptions.UnsupportedJWTSigningAlgorithmException;
+import io.supertokens.output.Logging;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.exceptions.StorageTransactionLogicException;
@@ -38,6 +39,7 @@ import io.supertokens.utils.Utils;
 import org.jetbrains.annotations.TestOnly;
 
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,45 +63,32 @@ public class JWTSigningKey extends ResourceDistributor.SingletonResource {
         }
     }
 
-    public static void loadForAllTenants(Main main, List<AppIdentifier> apps, List<TenantIdentifier> tenantsThatChanged)
-            throws UnsupportedJWTSigningAlgorithmException {
-        try {
-            main.getResourceDistributor().withResourceDistributorLock(() -> {
+    public static void loadForAllTenants(Main main, List<AppIdentifier> apps, List<TenantIdentifier> tenantsThatChanged) {
+        Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> existingResources =
+                main.getResourceDistributor()
+                        .getAllResourcesWithResourceKey(RESOURCE_KEY);
+        Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> newResources =
+                new HashMap<>();
+        for (AppIdentifier app : apps) {
+            ResourceDistributor.SingletonResource resource = existingResources.get(
+                    new ResourceDistributor.KeyClass(app, RESOURCE_KEY));
+            if (resource != null && !tenantsThatChanged.contains(app.getAsPublicTenantIdentifier())) {
+                newResources.put(new ResourceDistributor.KeyClass(app, RESOURCE_KEY), resource);
+            } else {
                 try {
-                    Map<ResourceDistributor.KeyClass, ResourceDistributor.SingletonResource> existingResources =
-                            main.getResourceDistributor()
-                                    .getAllResourcesWithResourceKey(RESOURCE_KEY);
-                    main.getResourceDistributor().clearAllResourcesWithResourceKey(RESOURCE_KEY);
-                    for (AppIdentifier app : apps) {
-                        ResourceDistributor.SingletonResource resource = existingResources.get(
-                                new ResourceDistributor.KeyClass(app, RESOURCE_KEY));
-                        if (resource != null && !tenantsThatChanged.contains(app.getAsPublicTenantIdentifier())) {
-                            main.getResourceDistributor().setResource(app, RESOURCE_KEY,
-                                    resource);
-                        } else {
-                            try {
-                                JWTSigningKey jwtSigningKey = new JWTSigningKey(app, main);
-                                main.getResourceDistributor()
-                                        .setResource(app, RESOURCE_KEY, jwtSigningKey);
-
-                                jwtSigningKey.generateKeysForSupportedAlgos(main);
-
-                            } catch (TenantOrAppNotFoundException e) {
-                                throw new IllegalStateException(e);
-                            }
-                        }
-                    }
-                } catch (UnsupportedJWTSigningAlgorithmException e) {
-                    throw new ResourceDistributor.FuncException(e);
+                    JWTSigningKey jwtSigningKey = new JWTSigningKey(app, main);
+                    // Register before generateKeysForSupportedAlgos so getInstance() can find it
+                    // (generateKeysForSupportedAlgos calls getInstance internally)
+                    main.getResourceDistributor().setResource(app, RESOURCE_KEY, jwtSigningKey);
+                    newResources.put(new ResourceDistributor.KeyClass(app, RESOURCE_KEY), jwtSigningKey);
+                    jwtSigningKey.generateKeysForSupportedAlgos(main);
+                } catch (Exception e) {
+                    Logging.error(main, app.getAsPublicTenantIdentifier(), e.getMessage(), false);
+                    // continue loading other resources
                 }
-                return null;
-            });
-        } catch (ResourceDistributor.FuncException e) {
-            if (e.getCause() instanceof UnsupportedJWTSigningAlgorithmException) {
-                throw (UnsupportedJWTSigningAlgorithmException) e.getCause();
             }
-            throw new RuntimeException(e);
         }
+        main.getResourceDistributor().replaceResourcesWithResourceKey(RESOURCE_KEY, newResources);
     }
 
     public enum SupportedAlgorithms {

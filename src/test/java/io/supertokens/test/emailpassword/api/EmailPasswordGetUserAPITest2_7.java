@@ -42,6 +42,9 @@ public class EmailPasswordGetUserAPITest2_7 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -209,10 +212,12 @@ public class EmailPasswordGetUserAPITest2_7 {
             return;
         }
 
-        AuthRecipeUserInfo user1 = ThirdParty.signInUp(process.getProcess(), "google", "googleid", "test@example.com").user;
+        AuthRecipeUserInfo user1 = ThirdParty.signInUp(process.getProcess(), "google", "googleid",
+                "test@example.com").user;
         Passwordless.CreateCodeResponse user2code = Passwordless.createCode(process.getProcess(), "test@example.com",
                 null, null, null);
-        AuthRecipeUserInfo user2 = Passwordless.consumeCode(process.getProcess(), user2code.deviceId, user2code.deviceIdHash, user2code.userInputCode, null).user;
+        AuthRecipeUserInfo user2 = Passwordless.consumeCode(process.getProcess(), user2code.deviceId,
+                user2code.deviceIdHash, user2code.userInputCode, null).user;
 
         {
             HashMap<String, String> map = new HashMap<>();

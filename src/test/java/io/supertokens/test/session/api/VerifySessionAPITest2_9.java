@@ -38,6 +38,9 @@ public class VerifySessionAPITest2_9 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -50,7 +53,7 @@ public class VerifySessionAPITest2_9 {
 
     @Test
     public void successOutputCheckNoNewAccessToken() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -105,7 +108,7 @@ public class VerifySessionAPITest2_9 {
 
     @Test
     public void successOutputCheckNewAccessToken() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -173,7 +176,7 @@ public class VerifySessionAPITest2_9 {
 
     @Test
     public void successOutputCheckNewAccessTokenWithCookieDomain() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         Utils.setValueInConfig("cookie_domain", "localhost");
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
@@ -246,8 +249,8 @@ public class VerifySessionAPITest2_9 {
 
         Utils.setValueInConfig("access_token_blacklisting", "true");
 
-        String[] args = { "../" };
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        String[] args = {"../"};
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         String userId = "userId";
@@ -295,7 +298,7 @@ public class VerifySessionAPITest2_9 {
 
         Utils.setValueInConfig("access_token_blacklisting", "true");
 
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
@@ -319,7 +322,7 @@ public class VerifySessionAPITest2_9 {
 
     @Test
     public void badInputTest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 

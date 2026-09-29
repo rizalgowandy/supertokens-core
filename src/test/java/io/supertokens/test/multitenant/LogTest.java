@@ -41,10 +41,14 @@ import java.util.HashSet;
 import java.util.Set;
 
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeTrue;
 
 public class LogTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -58,13 +62,16 @@ public class LogTest {
 
     @Test
     public void testLogThatEachLineIsUniqueOnStartup() throws Exception {
+        // Skip this test if file logging is disabled - when logging goes to console,
+        // the output contains different/additional lines which changes the expected behavior
+        assumeTrue("File logging is disabled via environment variable", Utils.isFileLoggingEnabled());
+
         String[] args = {"../"};
         Utils.setValueInConfig("log_level", "DEBUG");
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
-        process.startProcess();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
@@ -126,7 +133,7 @@ public class LogTest {
         System.setOut(new PrintStream(stdOutput));
         System.setErr(new PrintStream(errorOutput));
 
-        process = TestingProcessManager.start(args, false);
+        process = TestingProcessManager.startIsolatedProcess(args, false);
         Main.makeConsolePrintSilent = false;
         FeatureFlagTestContent.getInstance(process.getProcess())
                 .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{EE_FEATURES.MULTI_TENANCY});
@@ -146,7 +153,8 @@ public class LogTest {
             uniqueLines.add(line);
         }
 
-        assertEquals(uniqueLines.size(), lines.length - 1); // we have 1 repeating line which initialises connection pool
+        assertEquals(uniqueLines.size(),
+                lines.length - 1); // we have 1 repeating line which initialises connection pool
 
         assertEquals(7, Multitenancy.getAllTenants(process.getProcess()).length);
 

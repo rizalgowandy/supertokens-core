@@ -23,28 +23,39 @@ import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoun
 import org.jetbrains.annotations.TestOnly;
 
 import javax.annotation.Nonnull;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 // the purpose of this class is to tie singleton classes to s specific main instance. So that
 // when the main instance dies, those singleton classes die too.
 
 public class ResourceDistributor {
-    private final Map<KeyClass, SingletonResource> resources = new HashMap<>(1);
+    private final Map<KeyClass, SingletonResource> resources = new ConcurrentHashMap<>(1);
     private final Main main;
+
+    private static TenantIdentifier appUsedForTesting = TenantIdentifier.BASE_TENANT;
 
     public ResourceDistributor(Main main) {
         this.main = main;
     }
 
-    public synchronized SingletonResource getResource(AppIdentifier appIdentifier, @Nonnull String key)
+    @TestOnly
+    public static void setAppForTesting(TenantIdentifier app) {
+        appUsedForTesting = app;
+    }
+
+    @TestOnly
+    public static TenantIdentifier getAppForTesting() {
+        return appUsedForTesting;
+    }
+
+    public SingletonResource getResource(AppIdentifier appIdentifier, @Nonnull String key)
             throws TenantOrAppNotFoundException {
         return getResource(appIdentifier.getAsPublicTenantIdentifier(), key);
     }
 
-    public synchronized SingletonResource getResource(TenantIdentifier tenantIdentifier, @Nonnull String key)
+    public SingletonResource getResource(TenantIdentifier tenantIdentifier, @Nonnull String key)
             throws TenantOrAppNotFoundException {
         // first we do exact match
         SingletonResource resource = resources.get(new KeyClass(tenantIdentifier, key));
@@ -56,14 +67,6 @@ public class ResourceDistributor {
             // this means we are looking at base tenant and it's not something that
             // refreshing tenants will help with (in fact it will cause an infinite loop)
             throw new TenantOrAppNotFoundException(tenantIdentifier);
-        }
-
-        MultitenancyHelper.getInstance(main).refreshTenantsInCoreBasedOnChangesInCoreConfigOrIfTenantListChanged(true);
-
-        // we try again..
-        resource = resources.get(new KeyClass(tenantIdentifier, key));
-        if (resource != null) {
-            return resource;
         }
 
         // then we see if the user has configured anything to do with connectionUriDomain, and if they have,
@@ -89,55 +92,48 @@ public class ResourceDistributor {
     }
 
     @TestOnly
-    public synchronized SingletonResource getResource(@Nonnull String key) {
-        return resources.get(new KeyClass(new TenantIdentifier(null, null, null), key));
+    public SingletonResource getResource(@Nonnull String key) {
+        return resources.get(new KeyClass(appUsedForTesting, key));
     }
 
-    public synchronized SingletonResource setResource(TenantIdentifier tenantIdentifier,
+    public SingletonResource setResource(TenantIdentifier tenantIdentifier,
                                                       @Nonnull String key,
                                                       SingletonResource resource) {
-        SingletonResource alreadyExists = resources.get(new KeyClass(tenantIdentifier, key));
-        if (alreadyExists != null) {
-            return alreadyExists;
-        }
-        resources.put(new KeyClass(tenantIdentifier, key), resource);
-        return resource;
+        SingletonResource existing = resources.putIfAbsent(new KeyClass(tenantIdentifier, key), resource);
+        return existing != null ? existing : resource;
     }
 
-    public synchronized SingletonResource removeResource(TenantIdentifier tenantIdentifier,
-                                                      @Nonnull String key) {
-        SingletonResource singletonResource = resources.get(new KeyClass(tenantIdentifier, key));
-        if (singletonResource == null) {
-            return null;
-        }
-        resources.remove(new KeyClass(tenantIdentifier, key));
-        return singletonResource;
+    public SingletonResource removeResource(TenantIdentifier tenantIdentifier,
+                                                         @Nonnull String key) {
+        return resources.remove(new KeyClass(tenantIdentifier, key));
     }
 
-    public synchronized SingletonResource setResource(AppIdentifier appIdentifier,
+    public SingletonResource setResource(AppIdentifier appIdentifier,
                                                       @Nonnull String key,
                                                       SingletonResource resource) {
         return setResource(appIdentifier.getAsPublicTenantIdentifier(), key, resource);
     }
 
-    public synchronized SingletonResource removeResource(AppIdentifier appIdentifier,
+    public SingletonResource removeResource(AppIdentifier appIdentifier,
                                                          @Nonnull String key) {
         return removeResource(appIdentifier.getAsPublicTenantIdentifier(), key);
     }
 
-    public synchronized void clearAllResourcesWithResourceKey(String inputKey) {
-        List<KeyClass> toRemove = new ArrayList<>();
-        resources.forEach((key, value) -> {
-            if (key.key.equals(inputKey)) {
-                toRemove.add(key);
-            }
-        });
-        for (KeyClass keyClass : toRemove) {
-            resources.remove(keyClass);
-        }
+    public void clearAllResourcesWithResourceKey(String inputKey) {
+        resources.keySet().removeIf(k -> k.key.equals(inputKey));
     }
 
-    public synchronized Map<KeyClass, SingletonResource> getAllResourcesWithResourceKey(String inputKey) {
+    /**
+     * Atomically swaps resources for {@code inputKey}: adds/updates new entries first, then
+     * removes stale ones. Readers never observe a gap where valid tenants are temporarily absent
+     * (unlike a clearAllResourcesWithResourceKey followed by individual setResource calls).
+     */
+    public void replaceResourcesWithResourceKey(String inputKey, Map<KeyClass, SingletonResource> newResources) {
+        resources.putAll(newResources);
+        resources.keySet().removeIf(k -> k.key.equals(inputKey) && !newResources.containsKey(k));
+    }
+
+    public Map<KeyClass, SingletonResource> getAllResourcesWithResourceKey(String inputKey) {
         Map<KeyClass, SingletonResource> result = new HashMap<>();
         resources.forEach((key, value) -> {
             if (key.key.equals(inputKey)) {
@@ -148,9 +144,9 @@ public class ResourceDistributor {
     }
 
     @TestOnly
-    public synchronized SingletonResource setResource(@Nonnull String key,
+    public SingletonResource setResource(@Nonnull String key,
                                                       SingletonResource resource) {
-        return setResource(new TenantIdentifier(null, null, null), key, resource);
+        return setResource(appUsedForTesting, key, resource);
     }
 
     public interface Func<T> {
@@ -158,14 +154,6 @@ public class ResourceDistributor {
     }
 
     public synchronized <T> T withResourceDistributorLock(Func<T> func) throws FuncException {
-        return func.performTask();
-    }
-
-    public interface FuncWithReturn<T> {
-        T performTask() throws FuncException;
-    }
-
-    public synchronized <T> T withResourceDistributorLockWithReturn(FuncWithReturn<T> func) throws FuncException {
         return func.performTask();
     }
 

@@ -19,12 +19,10 @@ package io.supertokens.cronjobs.syncCoreConfigWithDb;
 import io.supertokens.Main;
 import io.supertokens.cronjobs.CronTask;
 import io.supertokens.cronjobs.CronTaskTest;
-import io.supertokens.cronjobs.deleteExpiredSessions.DeleteExpiredSessions;
-import io.supertokens.multitenancy.Multitenancy;
 import io.supertokens.multitenancy.MultitenancyHelper;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
-
-import java.util.List;
+import io.supertokens.pluginInterface.opentelemetry.WithinOtelSpan;
+import io.supertokens.storageLayer.StorageLayer;
 
 public class SyncCoreConfigWithDb extends CronTask {
 
@@ -62,8 +60,13 @@ public class SyncCoreConfigWithDb extends CronTask {
         return 60;
     }
 
+    @WithinOtelSpan
     @Override
     protected void doTaskForTargetTenant(TenantIdentifier targetTenant) throws Exception {
         MultitenancyHelper.getInstance(main).refreshTenantsInCoreBasedOnChangesInCoreConfigOrIfTenantListChanged(true);
+        // A storage fenced off by a startup schema mismatch (schema_check_strict_mode) recovers here within a
+        // minute of the migration being applied; the refresh above short-circuits when no tenant changed, so
+        // it alone would never re-verify. Free in the steady state - verified storages are a cached no-op.
+        StorageLayer.retrySchemaVerification(main);
     }
 }

@@ -16,30 +16,36 @@
 
 package io.supertokens.inmemorydb.queries;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 import io.supertokens.inmemorydb.ConnectionPool;
 import io.supertokens.inmemorydb.ConnectionWithLocks;
+import static io.supertokens.inmemorydb.QueryExecutorTemplate.execute;
+import static io.supertokens.inmemorydb.QueryExecutorTemplate.update;
 import io.supertokens.inmemorydb.Start;
 import io.supertokens.inmemorydb.Utils;
 import io.supertokens.inmemorydb.config.Config;
+import static io.supertokens.inmemorydb.config.Config.getConfig;
+import io.supertokens.pluginInterface.MigrationMode;
+import static io.supertokens.pluginInterface.RECIPE_ID.THIRD_PARTY;
 import io.supertokens.pluginInterface.RowMapper;
+import io.supertokens.pluginInterface.authRecipe.ACCOUNT_INFO_TYPE;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
 import io.supertokens.pluginInterface.authRecipe.LoginMethod;
-import io.supertokens.pluginInterface.emailpassword.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
 import io.supertokens.pluginInterface.exceptions.StorageQueryException;
 import io.supertokens.pluginInterface.exceptions.StorageTransactionLogicException;
 import io.supertokens.pluginInterface.multitenancy.AppIdentifier;
 import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
-
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.*;
-import java.util.stream.Collectors;
-
-import static io.supertokens.inmemorydb.QueryExecutorTemplate.execute;
-import static io.supertokens.inmemorydb.QueryExecutorTemplate.update;
-import static io.supertokens.inmemorydb.config.Config.getConfig;
-import static io.supertokens.pluginInterface.RECIPE_ID.THIRD_PARTY;
 
 public class ThirdPartyQueries {
 
@@ -53,7 +59,7 @@ public class ThirdPartyQueries {
                 + "time_joined BIGINT UNSIGNED NOT NULL,"
                 + "PRIMARY KEY (app_id, user_id),"
                 + "FOREIGN KEY (app_id, user_id) REFERENCES " + Config.getConfig(start).getAppIdToUserIdTable()
-                + " (app_id, user_id) ON DELETE CASCADE"
+                + " (app_id, user_id) ON DELETE CASCADE ON UPDATE CASCADE"
                 + ");";
     }
 
@@ -85,26 +91,38 @@ public class ThirdPartyQueries {
         // @formatter:on
     }
 
+    static String getQueryToCreateThirdPartyUserToTenantThirdPartyUserIdIndex(Start start) {
+        return "CREATE INDEX thirdparty_user_to_tenant_third_party_user_id_index ON "
+                + Config.getConfig(start).getThirdPartyUserToTenantTable() + "(app_id, tenant_id, third_party_id, third_party_user_id);";
+    }
+
     public static AuthRecipeUserInfo signUp(Start start, TenantIdentifier tenantIdentifier, String id, String email,
                                             LoginMethod.ThirdParty thirdParty, long timeJoined)
             throws StorageQueryException, StorageTransactionLogicException {
         return start.startTransaction(con -> {
             Connection sqlCon = (Connection) con.getConnection();
             try {
-                { // app_id_to_user_id
+                MigrationMode mode = Config.getConfig(start).getMigrationMode();
+
+                { // app_id_to_user_id — ALWAYS
                     String QUERY = "INSERT INTO " + getConfig(start).getAppIdToUserIdTable()
-                            + "(app_id, user_id, primary_or_recipe_user_id, recipe_id)" + " VALUES(?, ?, ?, ?)";
+                            + "(app_id, user_id, primary_or_recipe_user_id, recipe_id, time_joined, primary_or_recipe_user_time_joined)"
+                            + " VALUES(?, ?, ?, ?, ?, ?)";
                     update(sqlCon, QUERY, pst -> {
                         pst.setString(1, tenantIdentifier.getAppId());
                         pst.setString(2, id);
                         pst.setString(3, id);
                         pst.setString(4, THIRD_PARTY.toString());
+                        pst.setLong(5, timeJoined);
+                        pst.setLong(6, timeJoined);
                     });
                 }
 
-                { // all_auth_recipe_users
+                if (mode.writesToOldTables()) { // all_auth_recipe_users
                     String QUERY = "INSERT INTO " + getConfig(start).getUsersTable()
-                            + "(app_id, tenant_id, user_id, primary_or_recipe_user_id, recipe_id, time_joined, primary_or_recipe_user_time_joined)" +
+                            +
+                            "(app_id, tenant_id, user_id, primary_or_recipe_user_id, recipe_id, time_joined, " +
+                            "primary_or_recipe_user_time_joined)" +
                             " VALUES(?, ?, ?, ?, ?, ?, ?)";
                     update(sqlCon, QUERY, pst -> {
                         pst.setString(1, tenantIdentifier.getAppId());
@@ -117,7 +135,19 @@ public class ThirdPartyQueries {
                     });
                 }
 
-                { // thirdparty_users
+                if (mode.writesToNewTables()) { // recipe_user_tenants
+                    // Insert row for email. Store the actual third-party provider values so the PK is
+                    // naturally unique even when two ThirdParty users share the same email address.
+                    AccountInfoQueries.addRecipeUserAccountInfo_Transaction(start, sqlCon, tenantIdentifier, id,
+                            THIRD_PARTY.toString(), ACCOUNT_INFO_TYPE.EMAIL, thirdParty.id, thirdParty.userId, email);
+
+                    // Insert row for third party id
+                    AccountInfoQueries.addRecipeUserAccountInfo_Transaction(start, sqlCon, tenantIdentifier, id,
+                            THIRD_PARTY.toString(), ACCOUNT_INFO_TYPE.THIRD_PARTY, "", "",
+                            new LoginMethod.ThirdParty(thirdParty.id, thirdParty.userId).getAccountInfoValue());
+                }
+
+                { // thirdparty_users — ALWAYS
                     String QUERY = "INSERT INTO " + getConfig(start).getThirdPartyUsersTable()
                             + "(app_id, third_party_id, third_party_user_id, user_id, email, time_joined)"
                             + " VALUES(?, ?, ?, ?, ?, ?)";
@@ -131,7 +161,7 @@ public class ThirdPartyQueries {
                     });
                 }
 
-                { // thirdparty_user_to_tenant
+                if (mode.writesToOldTables()) { // thirdparty_user_to_tenant
                     String QUERY = "INSERT INTO " + getConfig(start).getThirdPartyUserToTenantTable()
                             + "(app_id, tenant_id, user_id, third_party_id, third_party_user_id)"
                             + " VALUES(?, ?, ?, ?, ?)";
@@ -159,6 +189,8 @@ public class ThirdPartyQueries {
     public static void deleteUser_Transaction(Connection sqlCon, Start start, AppIdentifier appIdentifier,
                                               String userId, boolean deleteUserIdMappingToo)
             throws StorageQueryException, SQLException {
+        MigrationMode mode = Config.getConfig(start).getMigrationMode();
+
         if (deleteUserIdMappingToo) {
             String QUERY = "DELETE FROM " + getConfig(start).getAppIdToUserIdTable()
                     + " WHERE app_id = ? AND user_id = ?";
@@ -168,7 +200,7 @@ public class ThirdPartyQueries {
                 pst.setString(2, userId);
             });
         } else {
-            {
+            if (mode.writesToOldTables()) {
                 String QUERY = "DELETE FROM " + getConfig(start).getUsersTable()
                         + " WHERE app_id = ? AND user_id = ?";
                 update(sqlCon, QUERY, pst -> {
@@ -186,30 +218,6 @@ public class ThirdPartyQueries {
                 });
             }
         }
-    }
-
-    public static List<String> lockEmail_Transaction(Start start, Connection con,
-                                                              AppIdentifier appIdentifier,
-                                                              String email) throws SQLException, StorageQueryException {
-        // normally the query below will use a for update, but sqlite doesn't support it.
-        ((ConnectionWithLocks) con).lock(
-                appIdentifier.getAppId() + "~" + email +
-                        Config.getConfig(start).getThirdPartyUsersTable());
-
-        String QUERY = "SELECT tp.user_id as user_id "
-                + "FROM " + getConfig(start).getThirdPartyUsersTable() + " AS tp" +
-                " WHERE tp.app_id = ? AND tp.email = ?";
-
-        return execute(con, QUERY, pst -> {
-            pst.setString(1, appIdentifier.getAppId());
-            pst.setString(2, email);
-        }, result -> {
-            List<String> finalResult = new ArrayList<>();
-            while (result.next()) {
-                finalResult.add(result.getString("user_id"));
-            }
-            return finalResult;
-        });
     }
 
     public static List<String> lockThirdPartyInfo_Transaction(Start start, Connection con,
@@ -272,7 +280,7 @@ public class ThirdPartyQueries {
     }
 
     public static List<LoginMethod> getUsersInfoUsingIdList_Transaction(Start start, Connection con, Set<String> ids,
-                                                            AppIdentifier appIdentifier)
+                                                                        AppIdentifier appIdentifier)
             throws SQLException, StorageQueryException {
         if (ids.size() > 0) {
             String QUERY = "SELECT user_id, third_party_id, third_party_user_id, email, time_joined "
@@ -308,7 +316,7 @@ public class ThirdPartyQueries {
 
         String QUERY = "SELECT DISTINCT all_users.primary_or_recipe_user_id AS user_id "
                 + "FROM " + getConfig(start).getThirdPartyUsersTable() + " AS tp" +
-                " JOIN " + getConfig(start).getUsersTable() + " AS all_users" +
+                " JOIN " + getConfig(start).getAppIdToUserIdTable() + " AS all_users" +
                 " ON tp.app_id = all_users.app_id AND tp.user_id = all_users.user_id" +
                 " WHERE tp.app_id = ? AND tp.third_party_id = ? AND tp.third_party_user_id = ?";
 
@@ -325,13 +333,14 @@ public class ThirdPartyQueries {
         });
     }
 
-    public static List<String> listUserIdsByThirdPartyInfo_Transaction(Start start, Connection con, AppIdentifier appIdentifier,
+    public static List<String> listUserIdsByThirdPartyInfo_Transaction(Start start, Connection con,
+                                                                       AppIdentifier appIdentifier,
                                                                        String thirdPartyId, String thirdPartyUserId)
             throws SQLException, StorageQueryException {
 
         String QUERY = "SELECT DISTINCT all_users.primary_or_recipe_user_id AS user_id "
                 + "FROM " + getConfig(start).getThirdPartyUsersTable() + " AS tp" +
-                " JOIN " + getConfig(start).getUsersTable() + " AS all_users" +
+                " JOIN " + getConfig(start).getAppIdToUserIdTable() + " AS all_users" +
                 " ON tp.app_id = all_users.app_id AND tp.user_id = all_users.user_id" +
                 " WHERE tp.app_id = ? AND tp.third_party_id = ? AND tp.third_party_user_id = ?";
 
@@ -349,14 +358,46 @@ public class ThirdPartyQueries {
     }
 
     public static String getUserIdByThirdPartyInfo(Start start, TenantIdentifier tenantIdentifier,
-                                                      String thirdPartyId, String thirdPartyUserId)
+                                                   String thirdPartyId, String thirdPartyUserId)
             throws SQLException, StorageQueryException {
+        if (Config.getConfig(start).getMigrationMode().readsFromNewTables()) {
+            return getUserIdByThirdPartyInfo_new(start, tenantIdentifier, thirdPartyId, thirdPartyUserId);
+        }
+        return getUserIdByThirdPartyInfo_legacy(start, tenantIdentifier, thirdPartyId, thirdPartyUserId);
+    }
 
+    private static String getUserIdByThirdPartyInfo_legacy(Start start, TenantIdentifier tenantIdentifier,
+                                                            String thirdPartyId, String thirdPartyUserId)
+            throws SQLException, StorageQueryException {
         String QUERY = "SELECT DISTINCT all_users.primary_or_recipe_user_id AS user_id "
                 + "FROM " + getConfig(start).getThirdPartyUserToTenantTable() + " AS tp" +
                 " JOIN " + getConfig(start).getUsersTable() + " AS all_users" +
                 " ON tp.app_id = all_users.app_id AND tp.user_id = all_users.user_id" +
                 " WHERE tp.app_id = ? AND tp.tenant_id = ? AND tp.third_party_id = ? AND tp.third_party_user_id = ?";
+
+        return execute(start, QUERY, pst -> {
+            pst.setString(1, tenantIdentifier.getAppId());
+            pst.setString(2, tenantIdentifier.getTenantId());
+            pst.setString(3, thirdPartyId);
+            pst.setString(4, thirdPartyUserId);
+        }, result -> {
+            if (result.next()) {
+                return result.getString("user_id");
+            }
+            return null;
+        });
+    }
+
+    private static String getUserIdByThirdPartyInfo_new(Start start, TenantIdentifier tenantIdentifier,
+                                                         String thirdPartyId, String thirdPartyUserId)
+            throws SQLException, StorageQueryException {
+        String QUERY = "SELECT DISTINCT a.primary_or_recipe_user_id AS user_id "
+                + "FROM " + getConfig(start).getRecipeUserTenantsTable() + " AS rut"
+                + " JOIN " + getConfig(start).getAppIdToUserIdTable() + " AS a"
+                + " ON rut.app_id = a.app_id AND rut.recipe_user_id = a.user_id"
+                + " WHERE rut.app_id = ? AND rut.tenant_id = ?"
+                + " AND rut.account_info_type = 'tparty'"
+                + " AND rut.third_party_id = ? AND rut.third_party_user_id = ?";
 
         return execute(start, QUERY, pst -> {
             pst.setString(1, tenantIdentifier.getAppId());
@@ -386,7 +427,7 @@ public class ThirdPartyQueries {
     }
 
     private static UserInfoPartial getUserInfoUsingUserId_Transaction(Start start, Connection con,
-                                                          AppIdentifier appIdentifier, String userId)
+                                                                      AppIdentifier appIdentifier, String userId)
             throws SQLException, StorageQueryException {
 
         // we don't need a LOCK here because this is already part of a transaction, and locked on app_id_to_user_id
@@ -407,6 +448,15 @@ public class ThirdPartyQueries {
 
     public static List<String> getPrimaryUserIdUsingEmail(Start start,
                                                           TenantIdentifier tenantIdentifier, String email)
+            throws StorageQueryException, SQLException {
+        if (Config.getConfig(start).getMigrationMode().readsFromNewTables()) {
+            return getPrimaryUserIdUsingEmail_new(start, tenantIdentifier, email);
+        }
+        return getPrimaryUserIdUsingEmail_legacy(start, tenantIdentifier, email);
+    }
+
+    private static List<String> getPrimaryUserIdUsingEmail_legacy(Start start,
+                                                                   TenantIdentifier tenantIdentifier, String email)
             throws StorageQueryException, SQLException {
         String QUERY = "SELECT DISTINCT all_users.primary_or_recipe_user_id AS user_id "
                 + "FROM " + getConfig(start).getThirdPartyUsersTable() + " AS tp" +
@@ -429,18 +479,21 @@ public class ThirdPartyQueries {
         });
     }
 
-    public static List<String> getPrimaryUserIdUsingEmail_Transaction(Start start, Connection con,
-                                                          AppIdentifier appIdentifier, String email)
+    private static List<String> getPrimaryUserIdUsingEmail_new(Start start,
+                                                                TenantIdentifier tenantIdentifier, String email)
             throws StorageQueryException, SQLException {
-        String QUERY = "SELECT DISTINCT all_users.primary_or_recipe_user_id AS user_id "
-                + "FROM " + getConfig(start).getThirdPartyUsersTable() + " AS tp" +
-                " JOIN " + getConfig(start).getAppIdToUserIdTable() + " AS all_users" +
-                " ON tp.app_id = all_users.app_id AND tp.user_id = all_users.user_id" +
-                " WHERE tp.app_id = ? AND tp.email = ?";
+        String QUERY = "SELECT DISTINCT a.primary_or_recipe_user_id AS user_id "
+                + "FROM " + getConfig(start).getRecipeUserTenantsTable() + " AS rut"
+                + " JOIN " + getConfig(start).getAppIdToUserIdTable() + " AS a"
+                + " ON rut.app_id = a.app_id AND rut.recipe_user_id = a.user_id"
+                + " WHERE rut.app_id = ? AND rut.tenant_id = ?"
+                + " AND rut.account_info_type = 'email' AND rut.account_info_value = ?"
+                + " AND rut.recipe_id = 'thirdparty'";
 
-        return execute(con, QUERY, pst -> {
-            pst.setString(1, appIdentifier.getAppId());
-            pst.setString(2, email);
+        return execute(start, QUERY, pst -> {
+            pst.setString(1, tenantIdentifier.getAppId());
+            pst.setString(2, tenantIdentifier.getTenantId());
+            pst.setString(3, email);
         }, result -> {
             List<String> finalResult = new ArrayList<>();
             while (result.next()) {
@@ -453,6 +506,8 @@ public class ThirdPartyQueries {
     public static boolean addUserIdToTenant_Transaction(Start start, Connection sqlCon,
                                                         TenantIdentifier tenantIdentifier, String userId)
             throws SQLException, StorageQueryException, UnknownUserIdException {
+        MigrationMode mode = Config.getConfig(start).getMigrationMode();
+
         UserInfoPartial userInfo = ThirdPartyQueries.getUserInfoUsingUserId_Transaction(start, sqlCon,
                 tenantIdentifier.toAppIdentifier(), userId);
 
@@ -460,11 +515,14 @@ public class ThirdPartyQueries {
             throw new UnknownUserIdException();
         }
 
-        GeneralQueries.AccountLinkingInfo accountLinkingInfo = GeneralQueries.getAccountLinkingInfo_Transaction(start, sqlCon, tenantIdentifier.toAppIdentifier(), userId);
+        GeneralQueries.AccountLinkingInfo accountLinkingInfo = GeneralQueries.getAccountLinkingInfo_Transaction(start,
+                sqlCon, tenantIdentifier.toAppIdentifier(), userId);
 
-        { // all_auth_recipe_users
+        if (mode.writesToOldTables()) { // all_auth_recipe_users
             String QUERY = "INSERT INTO " + getConfig(start).getUsersTable()
-                    + "(app_id, tenant_id, user_id, primary_or_recipe_user_id, is_linked_or_is_a_primary_user, recipe_id, time_joined, primary_or_recipe_user_time_joined)"
+                    +
+                    "(app_id, tenant_id, user_id, primary_or_recipe_user_id, is_linked_or_is_a_primary_user, " +
+                    "recipe_id, time_joined, primary_or_recipe_user_time_joined)"
                     + " VALUES(?, ?, ?, ?, ?, ?, ?, ?)" + " ON CONFLICT DO NOTHING";
             update(sqlCon, QUERY, pst -> {
                 pst.setString(1, tenantIdentifier.getAppId());
@@ -477,10 +535,11 @@ public class ThirdPartyQueries {
                 pst.setLong(8, userInfo.timeJoined);
             });
 
-            GeneralQueries.updateTimeJoinedForPrimaryUser_Transaction(start, sqlCon, tenantIdentifier.toAppIdentifier(), accountLinkingInfo.primaryUserId);
+            GeneralQueries.updateTimeJoinedForPrimaryUser_Transaction(start, sqlCon, tenantIdentifier.toAppIdentifier(),
+                    accountLinkingInfo.primaryUserId);
         }
 
-        { // thirdparty_user_to_tenant
+        if (mode.writesToOldTables()) { // thirdparty_user_to_tenant
             String QUERY = "INSERT INTO " + getConfig(start).getThirdPartyUserToTenantTable()
                     + "(app_id, tenant_id, user_id, third_party_id, third_party_user_id)"
                     + " VALUES(?, ?, ?, ?, ?)" + " ON CONFLICT (app_id, tenant_id, user_id) DO NOTHING";
@@ -494,12 +553,16 @@ public class ThirdPartyQueries {
 
             return numRows > 0;
         }
+
+        return true;
     }
 
     public static boolean removeUserIdFromTenant_Transaction(Start start, Connection sqlCon,
                                                              TenantIdentifier tenantIdentifier, String userId)
             throws SQLException, StorageQueryException {
-        { // all_auth_recipe_users
+        MigrationMode mode = Config.getConfig(start).getMigrationMode();
+
+        if (mode.writesToOldTables()) { // all_auth_recipe_users
             String QUERY = "DELETE FROM " + getConfig(start).getUsersTable()
                     + " WHERE app_id = ? AND tenant_id = ? and user_id = ? and recipe_id = ?";
             int numRows = update(sqlCon, QUERY, pst -> {
@@ -510,9 +573,10 @@ public class ThirdPartyQueries {
             });
 
             return numRows > 0;
+            // automatically deleted from thirdparty_user_to_tenant because of foreign key constraint
         }
 
-        // automatically deleted from thirdparty_user_to_tenant because of foreign key constraint
+        return true;
     }
 
     private static UserInfoPartial fillUserInfoWithVerified_transaction(Start start, Connection sqlCon,

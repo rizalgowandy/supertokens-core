@@ -36,6 +36,9 @@ public class SessionRegenerateAPITest2_7 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -48,7 +51,7 @@ public class SessionRegenerateAPITest2_7 {
 
     @Test
     public void testCallRegenerateAPIWithNewJwtPayloadAndCheckResponses() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -110,10 +113,10 @@ public class SessionRegenerateAPITest2_7 {
 
     @Test
     public void testWaitForAccessTokenToExpireCallRegenerateWithNewJWTPayloadAndCheckResponses() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         Utils.setValueInConfig("access_token_validity", "1");
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
 
         // createSession with JWT payload
@@ -171,7 +174,7 @@ public class SessionRegenerateAPITest2_7 {
     @Test
     public void testRefreshTokenExpiryCallRegenerateAPIWithNewPayloadAndCheckResponse() throws Exception {
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         Utils.setValueInConfig("refresh_token_validity", "" + 1.0 / 60);// 1 second validity (value in mins)
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
@@ -228,7 +231,7 @@ public class SessionRegenerateAPITest2_7 {
 
     @Test
     public void testCallRegenerateAPIWithProtectedFieldInJWTV2Token() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));

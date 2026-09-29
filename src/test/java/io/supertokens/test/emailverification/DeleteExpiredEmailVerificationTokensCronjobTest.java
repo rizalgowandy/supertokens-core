@@ -25,7 +25,6 @@ import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
 import io.supertokens.pluginInterface.emailverification.EmailVerificationTokenInfo;
 import io.supertokens.pluginInterface.emailverification.sqlStorage.EmailVerificationSQLStorage;
-import io.supertokens.pluginInterface.multitenancy.TenantIdentifier;
 import io.supertokens.storageLayer.StorageLayer;
 import io.supertokens.test.TestingProcessManager;
 import io.supertokens.test.Utils;
@@ -41,6 +40,9 @@ public class DeleteExpiredEmailVerificationTokensCronjobTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -55,8 +57,8 @@ public class DeleteExpiredEmailVerificationTokensCronjobTest {
     public void checkingCronJob() throws Exception {
         String[] args = {"../"};
 
-        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args, false);
         Utils.setValueInConfig("email_verification_token_lifetime", "4000");
+        TestingProcessManager.TestingProcess process = TestingProcessManager.startIsolatedProcess(args, false);
         CronTaskTest.getInstance(process.getProcess())
                 .setIntervalInSeconds(DeleteExpiredEmailVerificationTokens.RESOURCE_KEY, 1);
         process.startProcess();
@@ -67,22 +69,29 @@ public class DeleteExpiredEmailVerificationTokensCronjobTest {
 
         AuthRecipeUserInfo user = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password");
 
-        String tok = EmailVerification.generateEmailVerificationToken(process.getProcess(), user.getSupertokensUserId(), user.loginMethods[0].email);
-        String tok2 = EmailVerification.generateEmailVerificationToken(process.getProcess(), user.getSupertokensUserId(), user.loginMethods[0].email);
+        String tok = EmailVerification.generateEmailVerificationToken(process.getProcess(), user.getSupertokensUserId(),
+                user.loginMethods[0].email);
+        String tok2 = EmailVerification.generateEmailVerificationToken(process.getProcess(),
+                user.getSupertokensUserId(), user.loginMethods[0].email);
 
         Thread.sleep(2000);
 
-        String tok3 = EmailVerification.generateEmailVerificationToken(process.getProcess(), user.getSupertokensUserId(), user.loginMethods[0].email);
-        String tok4 = EmailVerification.generateEmailVerificationToken(process.getProcess(), user.getSupertokensUserId(), user.loginMethods[0].email);
+        String tok3 = EmailVerification.generateEmailVerificationToken(process.getProcess(),
+                user.getSupertokensUserId(), user.loginMethods[0].email);
+        String tok4 = EmailVerification.generateEmailVerificationToken(process.getProcess(),
+                user.getSupertokensUserId(), user.loginMethods[0].email);
 
         assert (((EmailVerificationSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllEmailVerificationTokenInfoForUser(new TenantIdentifier(null, null, null), user.getSupertokensUserId(), user.loginMethods[0].email).length ==
+                .getAllEmailVerificationTokenInfoForUser(process.getAppForTesting(),
+                        user.getSupertokensUserId(), user.loginMethods[0].email).length ==
                 4);
 
         Thread.sleep(3500);
 
-        EmailVerificationTokenInfo[] tokens = ((EmailVerificationSQLStorage) StorageLayer.getStorage(process.getProcess()))
-                .getAllEmailVerificationTokenInfoForUser(new TenantIdentifier(null, null, null), user.getSupertokensUserId(), user.loginMethods[0].email);
+        EmailVerificationTokenInfo[] tokens = ((EmailVerificationSQLStorage) StorageLayer.getStorage(
+                process.getProcess()))
+                .getAllEmailVerificationTokenInfoForUser(process.getAppForTesting(),
+                        user.getSupertokensUserId(), user.loginMethods[0].email);
 
         assert (tokens.length == 2);
 

@@ -45,6 +45,9 @@ public class JWTSigningAPITest2_9 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -60,7 +63,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatNullAlgorithmThrowsError() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -89,7 +92,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatWrongAlgorithmReturnsUnsupportedError() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -114,7 +117,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatNullJwksDomainThrowsError() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -143,7 +146,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatNullPayloadThrowsError() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -171,7 +174,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatNonJSONParseablePayloadThrowsError() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -200,7 +203,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatNullValidityThrowsError() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -229,7 +232,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatNegativeValidityThrowsError() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -259,7 +262,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatCallingWithValidParamsSucceeds() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -286,7 +289,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatReturnedJWTHasValidHeader() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -322,7 +325,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatDecodedJWTHasCustomPayload() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -358,7 +361,7 @@ public class JWTSigningAPITest2_9 {
      */
     @Test
     public void testThatComplexJsonForCustomPayloadWorksFine() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));

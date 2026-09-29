@@ -32,6 +32,7 @@ import java.io.IOException;
 
 // the point of this API is only to test that the server is up and running.
 
+//@WithinOtelSpan
 public class HelloAPI extends WebserverAPI {
 
     private static final long serialVersionUID = 1L;
@@ -75,14 +76,23 @@ public class HelloAPI extends WebserverAPI {
         handleRequest(req, resp);
     }
 
+
     private void handleRequest(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
         // API is app specific
 
         try {
             AppIdentifier appIdentifier = getAppIdentifier(req);
-            Storage[] storages = StorageLayer.getStoragesForApp(main, appIdentifier); // throws tenantOrAppNotFoundException
+            Storage[] storages = StorageLayer.getStoragesForApp(main,
+                    appIdentifier); // throws tenantOrAppNotFoundException
 
             RateLimiter rateLimiter = RateLimiter.getInstance(appIdentifier, super.main, 200);
+//            TelemetryAppender.getInstance()
+//                    .appendEventToCurrentSpan("HelloAPI called", null, System.currentTimeMillis());
+//            TelemetryAppender.getInstance()
+//                    .appendEventToCurrentSpan("HelloAPI called", Map.of("eventKey", "eventValue"),
+//                            System.currentTimeMillis());
+//            TelemetryAppender.getInstance().appendAttributesToCurrentSpan(
+//                    Map.of("rateLimited", String.valueOf(rateLimiter.checkRequest())));
             if (!rateLimiter.checkRequest()) {
                 if (Main.isTesting) {
                     super.sendTextResponse(200, "RateLimitedHello", resp);
@@ -97,6 +107,7 @@ public class HelloAPI extends WebserverAPI {
                 // idea here is to test that the storage is working
                 storage.getKeyValue(appIdentifier.getAsPublicTenantIdentifier(), "Test");
             }
+
             super.sendTextResponse(200, "Hello", resp);
         } catch (StorageQueryException | TenantOrAppNotFoundException e) {
             // we send 500 status code

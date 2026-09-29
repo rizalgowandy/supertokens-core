@@ -17,19 +17,41 @@
 package io.supertokens.test;
 
 import com.google.gson.JsonObject;
+import io.supertokens.Main;
 import io.supertokens.ProcessState;
+import io.supertokens.ResourceDistributor;
 import io.supertokens.authRecipe.AuthRecipe;
 import io.supertokens.authRecipe.UserPaginationContainer;
+import io.supertokens.pluginInterface.authRecipe.exceptions.AccountInfoAlreadyAssociatedWithAnotherPrimaryUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.InputUserIdIsNotAPrimaryUserException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.CannotLinkSinceRecipeUserIdAlreadyLinkedWithAnotherPrimaryUserIdException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.CannotBecomePrimarySinceRecipeUserIdAlreadyLinkedWithPrimaryUserIdException;
 import io.supertokens.emailpassword.EmailPassword;
 import io.supertokens.emailverification.EmailVerification;
+import io.supertokens.emailverification.exception.EmailAlreadyVerifiedException;
 import io.supertokens.emailverification.exception.EmailVerificationInvalidTokenException;
+import io.supertokens.featureflag.EE_FEATURES;
+import io.supertokens.featureflag.FeatureFlagTestContent;
+import io.supertokens.featureflag.exceptions.FeatureNotEnabledException;
+import io.supertokens.multitenancy.Multitenancy;
+import io.supertokens.multitenancy.exception.BadPermissionException;
+import io.supertokens.multitenancy.exception.CannotModifyBaseConfigException;
 import io.supertokens.passwordless.Passwordless;
 import io.supertokens.passwordless.Passwordless.CreateCodeResponse;
 import io.supertokens.pluginInterface.RECIPE_ID;
 import io.supertokens.pluginInterface.STORAGE_TYPE;
 import io.supertokens.pluginInterface.authRecipe.AuthRecipeUserInfo;
+import io.supertokens.pluginInterface.emailpassword.exceptions.DuplicateEmailException;
+import io.supertokens.pluginInterface.authRecipe.exceptions.UnknownUserIdException;
+import io.supertokens.pluginInterface.exceptions.InvalidConfigException;
+import io.supertokens.pluginInterface.exceptions.StorageQueryException;
+import io.supertokens.pluginInterface.exceptions.StorageTransactionLogicException;
+import io.supertokens.pluginInterface.multitenancy.*;
+import io.supertokens.pluginInterface.multitenancy.exceptions.TenantOrAppNotFoundException;
 import io.supertokens.session.Session;
 import io.supertokens.storageLayer.StorageLayer;
+import io.supertokens.test.httpRequest.HttpResponseException;
+import io.supertokens.thirdparty.InvalidProviderConfigException;
 import io.supertokens.thirdparty.ThirdParty;
 import io.supertokens.usermetadata.UserMetadata;
 import io.supertokens.version.Version;
@@ -38,21 +60,25 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestRule;
-import org.reflections.Reflections;
 
+import java.io.IOException;
+import java.security.NoSuchAlgorithmException;
+import java.security.spec.InvalidKeySpecException;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import static org.junit.Assert.*;
 
 public class AuthRecipeTest {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
+
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
 
     @AfterClass
     public static void afterTesting() {
@@ -200,9 +226,13 @@ public class AuthRecipeTest {
         }
 
         AuthRecipeUserInfo user1 = EmailPassword.signUp(process.getProcess(), "test0@example.com", "password0");
+        Thread.sleep(20);
         AuthRecipeUserInfo user2 = EmailPassword.signUp(process.getProcess(), "test1@example.com", "password1");
+        Thread.sleep(20);
         AuthRecipeUserInfo user3 = EmailPassword.signUp(process.getProcess(), "test20@example.com", "password2");
+        Thread.sleep(20);
         AuthRecipeUserInfo user4 = EmailPassword.signUp(process.getProcess(), "test3@example.com", "password3");
+        Thread.sleep(20);
 
         {
             UserPaginationContainer users = AuthRecipe.getUsers(process.getProcess(), 100, "ASC", null,
@@ -525,7 +555,8 @@ public class AuthRecipeTest {
                         AuthRecipeUserInfo expected = usersCreated.get(indexIntoUsers);
                         AuthRecipeUserInfo actualUser = uc;
 
-                        assert (actualUser.equals(expected) && uc.loginMethods[0].recipeId.toString().equals(expected.loginMethods[0].recipeId.toString()));
+                        assert (actualUser.equals(expected) && uc.loginMethods[0].recipeId.toString()
+                                .equals(expected.loginMethods[0].recipeId.toString()));
                         indexIntoUsers++;
                     }
 
@@ -564,7 +595,8 @@ public class AuthRecipeTest {
                         AuthRecipeUserInfo expected = usersCreated.get(indexIntoUsers);
                         AuthRecipeUserInfo actualUser = uc;
 
-                        assert (actualUser.equals(expected) && uc.loginMethods[0].recipeId.toString().equals(expected.loginMethods[0].recipeId.toString()));
+                        assert (actualUser.equals(expected) && uc.loginMethods[0].recipeId.toString()
+                                .equals(expected.loginMethods[0].recipeId.toString()));
                         indexIntoUsers--;
                     }
 
@@ -605,28 +637,38 @@ public class AuthRecipeTest {
             JsonObject testMetadata = new JsonObject();
             testMetadata.addProperty("test", "test");
             UserMetadata.updateUserMetadata(process.getProcess(), user1.getSupertokensUserId(), testMetadata);
-            Session.createNewSession(process.getProcess(), user1.getSupertokensUserId(), new JsonObject(), new JsonObject());
+            Session.createNewSession(process.getProcess(), user1.getSupertokensUserId(), new JsonObject(),
+                    new JsonObject());
             String emailVerificationToken = EmailVerification.generateEmailVerificationToken(process.getProcess(),
                     user1.getSupertokensUserId(), "email");
             EmailVerification.verifyEmail(process.getProcess(), emailVerificationToken);
 
             AuthRecipeUserInfo user2 = signUpMap.get(userType).apply(null);
-            Session.createNewSession(process.getProcess(), user2.getSupertokensUserId(), new JsonObject(), new JsonObject());
+            Session.createNewSession(process.getProcess(), user2.getSupertokensUserId(), new JsonObject(),
+                    new JsonObject());
             String emailVerificationToken2 = EmailVerification.generateEmailVerificationToken(process.getProcess(),
                     user2.getSupertokensUserId(), "email");
 
-            assertEquals(2, AuthRecipe.getUsersCount(process.getProcess(), new RECIPE_ID[]{user1.loginMethods[0].recipeId}));
+            assertEquals(2,
+                    AuthRecipe.getUsersCount(process.getProcess(), new RECIPE_ID[]{user1.loginMethods[0].recipeId}));
             AuthRecipe.deleteUser(process.getProcess(), user1.getSupertokensUserId());
-            assertEquals(1, AuthRecipe.getUsersCount(process.getProcess(), new RECIPE_ID[]{user1.loginMethods[0].recipeId}));
-            assertEquals(0, Session.getAllNonExpiredSessionHandlesForUser(process.getProcess(), user1.getSupertokensUserId()).length);
-            assertEquals(1, Session.getAllNonExpiredSessionHandlesForUser(process.getProcess(), user2.getSupertokensUserId()).length);
+            assertEquals(1,
+                    AuthRecipe.getUsersCount(process.getProcess(), new RECIPE_ID[]{user1.loginMethods[0].recipeId}));
+            assertEquals(0, Session.getAllNonExpiredSessionHandlesForUser(process.getProcess(),
+                    user1.getSupertokensUserId()).length);
+            assertEquals(1, Session.getAllNonExpiredSessionHandlesForUser(process.getProcess(),
+                    user2.getSupertokensUserId()).length);
             assertFalse(EmailVerification.isEmailVerified(process.getProcess(), user1.getSupertokensUserId(), "email"));
-            assertEquals(0, UserMetadata.getUserMetadata(process.getProcess(), user1.getSupertokensUserId()).entrySet().size());
+            assertEquals(0,
+                    UserMetadata.getUserMetadata(process.getProcess(), user1.getSupertokensUserId()).entrySet().size());
 
             AuthRecipe.deleteUser(process.getProcess(), user2.getSupertokensUserId());
-            assertEquals(0, AuthRecipe.getUsersCount(process.getProcess(), new RECIPE_ID[]{user1.loginMethods[0].recipeId}));
-            assertEquals(0, Session.getAllNonExpiredSessionHandlesForUser(process.getProcess(), user2.getSupertokensUserId()).length);
-            assertEquals(0, UserMetadata.getUserMetadata(process.getProcess(), user2.getSupertokensUserId()).entrySet().size());
+            assertEquals(0,
+                    AuthRecipe.getUsersCount(process.getProcess(), new RECIPE_ID[]{user1.loginMethods[0].recipeId}));
+            assertEquals(0, Session.getAllNonExpiredSessionHandlesForUser(process.getProcess(),
+                    user2.getSupertokensUserId()).length);
+            assertEquals(0,
+                    UserMetadata.getUserMetadata(process.getProcess(), user2.getSupertokensUserId()).entrySet().size());
 
             Exception error = null;
             try {
@@ -639,6 +681,95 @@ public class AuthRecipeTest {
 
         process.kill();
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STOPPED));
+    }
+
+    @Test
+    public void loadUsersByAccountInfoReturnsUsersForTenantOnly()
+            throws InterruptedException, TenantOrAppNotFoundException, InvalidProviderConfigException,
+            StorageQueryException, FeatureNotEnabledException, IOException, InvalidConfigException,
+            CannotModifyBaseConfigException, BadPermissionException, DuplicateEmailException, HttpResponseException,
+            AccountInfoAlreadyAssociatedWithAnotherPrimaryUserIdException, InputUserIdIsNotAPrimaryUserException,
+            CannotLinkSinceRecipeUserIdAlreadyLinkedWithAnotherPrimaryUserIdException, UnknownUserIdException,
+            CannotBecomePrimarySinceRecipeUserIdAlreadyLinkedWithPrimaryUserIdException, EmailVerificationInvalidTokenException,
+            StorageTransactionLogicException, NoSuchAlgorithmException, EmailAlreadyVerifiedException,
+            InvalidKeySpecException {
+        String[] args = {"../"};
+
+        TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
+        assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
+
+        if (StorageLayer.getStorage(process.getProcess()).getType() != STORAGE_TYPE.SQL) {
+            return;
+        }
+
+        Main main = process.getProcess();
+
+        FeatureFlagTestContent.getInstance(process.getProcess())
+                .setKeyValue(FeatureFlagTestContent.ENABLED_FEATURES, new EE_FEATURES[]{
+                        EE_FEATURES.MULTI_TENANCY, EE_FEATURES.ACCOUNT_LINKING});
+
+        // tenant 1
+        TenantIdentifier tenantIdentifier = ResourceDistributor.getAppForTesting();
+
+        // tenant 2
+        JsonObject config2 = new JsonObject();
+        TenantIdentifier tenantIdentifier2 = new TenantIdentifier(tenantIdentifier.getConnectionUriDomain(),
+                tenantIdentifier.getAppId(), "t1");
+
+        Multitenancy.addNewOrUpdateAppOrTenant(
+                main,
+                tenantIdentifier,
+                new TenantConfig(
+                        tenantIdentifier2,
+                        new EmailPasswordConfig(true),
+                        new ThirdPartyConfig(true, null),
+                        new PasswordlessConfig(true),
+                        null, null, config2
+                )
+        );
+
+        AuthRecipeUserInfo publicTenantUser = EmailPassword.signUp(tenantIdentifier,
+                StorageLayer.getStorage(main), main,
+                "user0@example.com", "password");
+
+        EmailPassword.signUp(tenantIdentifier2, StorageLayer.getStorage(main), main,
+                "user0@example.com", "password");
+
+        List<JsonObject> webauthnUsers = io.supertokens.test.webauthn.Utils.registerUsers(main, 1);
+
+        String token = EmailVerification.generateEmailVerificationToken(main,
+                publicTenantUser.getSupertokensUserId(), "user0@example.com");
+        EmailVerification.verifyEmail(main, token);
+
+        AuthRecipe.CreatePrimaryUserResult result = AuthRecipe.createPrimaryUser(main,
+                tenantIdentifier.toAppIdentifier(), StorageLayer.getStorage(main),
+                publicTenantUser.getSupertokensUserId());
+
+        publicTenantUser = AuthRecipe.getUserById(tenantIdentifier.toAppIdentifier(), StorageLayer.getStorage(main),
+                result.user.getSupertokensUserId());
+
+        AuthRecipe.linkAccounts(main,
+                webauthnUsers.getFirst().getAsJsonObject("user").get("id").getAsString(),
+                publicTenantUser.getSupertokensUserId());
+
+        AuthRecipeUserInfo[] usersByEmail = AuthRecipe.getUsersByAccountInfo(tenantIdentifier2,
+                StorageLayer.getStorage(tenantIdentifier2, main), false,
+                "user0@example.com", null, null, null, null);
+
+        assertEquals(1, usersByEmail.length);
+        assertEquals(1, usersByEmail[0].loginMethods.length);
+        assertEquals(1, usersByEmail[0].tenantIds.size());
+        assertEquals("t1", usersByEmail[0].tenantIds.toArray()[0]);
+
+
+        usersByEmail = AuthRecipe.getUsersByAccountInfo(tenantIdentifier,
+                StorageLayer.getStorage(tenantIdentifier, main), false,
+                "user0@example.com", null, null, null, null);
+
+        assertEquals(1, usersByEmail.length);
+        assertEquals(2, usersByEmail[0].loginMethods.length);
+        assertEquals(1, usersByEmail[0].tenantIds.size());
+        assertEquals("public", usersByEmail[0].tenantIds.toArray()[0]);
     }
 
     private static List<String> getAuthRecipes() {

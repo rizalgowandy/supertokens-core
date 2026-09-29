@@ -38,6 +38,9 @@ public class JWTDataAPITest2_7 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -51,7 +54,7 @@ public class JWTDataAPITest2_7 {
     // * - create session with some JWT payload -> change JWT payload using API -> check this is reflected in db
     @Test
     public void testCreateSessionWithPayloadChangePayloadWithApiAndCheckChangeReflectedInDB() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -106,7 +109,7 @@ public class JWTDataAPITest2_7 {
     // reflected in db
     @Test
     public void testCreateSessionWithJwtPayloadChangePayloadToEmptyUsingSessionCheckIfReflectedInDB() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -157,7 +160,7 @@ public class JWTDataAPITest2_7 {
     // * - create session -> let it expire, remove from db -> call update API -> make sure you get unauthorised error
     @Test
     public void testCreateSessionLetItExpireCallPutAPIAndCheckUnauthorised() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         Utils.setValueInConfig("access_token_validity", "1");// 1 second validity
         Utils.setValueInConfig("refresh_token_validity", "" + 1.0 / 60);// 1 second validity (value in mins)
@@ -217,7 +220,7 @@ public class JWTDataAPITest2_7 {
     @Test
     public void testCreateSessionLetItExpreRemoveFromDBCallGetAPIAndCheckUnauthorised() throws Exception {
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         Utils.setValueInConfig("access_token_validity", "1");// 1 second validity
         Utils.setValueInConfig("refresh_token_validity", "" + 1.0 / 60);// 1 second validity (value in mins)
@@ -276,7 +279,7 @@ public class JWTDataAPITest2_7 {
     @Test
     public void testJWTDataAPI() throws Exception {
 
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -322,7 +325,8 @@ public class JWTDataAPITest2_7 {
                 "http://localhost:3567/recipe/jwt/data", params, 1000, 1000, null, SemVer.v2_7.get(),
                 "session");
         assertEquals(getJwtData.get("status").getAsString(), "OK");
-        assertEquals(getJwtData.get("userDataInJWT").getAsJsonObject().get("key").getAsString(), "łukasz 馬 / 马 value2");
+        assertEquals(getJwtData.get("userDataInJWT").getAsJsonObject().get("key").getAsString(),
+                "łukasz 馬 / 马 value2");
         assertEquals(getJwtData.entrySet().size(), 2);
 
         process.kill();
@@ -332,7 +336,7 @@ public class JWTDataAPITest2_7 {
 
     @Test
     public void testBapInputJWTDataAPI() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));

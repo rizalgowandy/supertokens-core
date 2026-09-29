@@ -38,6 +38,9 @@ public class RefreshSessionAPITest3_0 {
     @Rule
     public TestRule watchman = Utils.getOnFailure();
 
+    @Rule
+    public TestRule retryFlaky = Utils.retryFlakyTest();
+
     @AfterClass
     public static void afterTesting() {
         Utils.afterTesting();
@@ -50,7 +53,7 @@ public class RefreshSessionAPITest3_0 {
 
     @Test
     public void successOutputWithValidRefreshTokenTest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -91,7 +94,7 @@ public class RefreshSessionAPITest3_0 {
 
     @Test
     public void successOutputUpgradeWithNonStaticKeySessionTest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -132,7 +135,7 @@ public class RefreshSessionAPITest3_0 {
 
     @Test
     public void successOutputUpgradeWithStaticKeySessionTest() throws Exception {
-        String[] args = { "../" };
+        String[] args = {"../"};
 
         TestingProcessManager.TestingProcess process = TestingProcessManager.start(args);
         assertNotNull(process.checkOrWaitForEvent(ProcessState.PROCESS_STATE.STARTED));
@@ -172,7 +175,8 @@ public class RefreshSessionAPITest3_0 {
     }
 
     private static void checkRefreshSessionResponse(JsonObject response, TestingProcessManager.TestingProcess process,
-                                                    String userId, JsonObject userDataInJWT, boolean hasAntiCsrf, boolean useStaticKey) throws
+                                                    String userId, JsonObject userDataInJWT, boolean hasAntiCsrf,
+                                                    boolean useStaticKey) throws
             JWT.JWTException {
 
         assertNotNull(response.get("session").getAsJsonObject().get("handle").getAsString());
@@ -187,12 +191,13 @@ public class RefreshSessionAPITest3_0 {
         assertTrue(response.get("accessToken").getAsJsonObject().has("createdTime"));
         assertEquals(response.get("accessToken").getAsJsonObject().entrySet().size(), 3);
 
-        JWT.JWTPreParseInfo tokenInfo = JWT.preParseJWTInfo(response.get("accessToken").getAsJsonObject().get("token").getAsString());
+        JWT.JWTPreParseInfo tokenInfo = JWT.preParseJWTInfo(
+                response.get("accessToken").getAsJsonObject().get("token").getAsString());
 
         if (useStaticKey) {
-            assert(tokenInfo.kid.startsWith("s-"));
+            assert (tokenInfo.kid.startsWith("s-"));
         } else {
-            assert(tokenInfo.kid.startsWith("d-"));
+            assert (tokenInfo.kid.startsWith("d-"));
         }
 
         assertTrue(response.get("refreshToken").getAsJsonObject().has("token"));
